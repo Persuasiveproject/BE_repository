@@ -1,28 +1,31 @@
-name: Development ECR check
+name: Deploy development image
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [develop]
-    paths:
-      - .github/workflows/dev-ecr-check.yml
+  workflow_call:
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: dev-ecr-check
-  cancel-in-progress: false
+  group: yeongeopjung-development-deploy
+  queue: max
 
 jobs:
-  publish:
-    if: github.ref == 'refs/heads/develop'
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       AWS_REGION: ap-southeast-2
       AWS_ACCOUNT_ID: '149320913208'
       ECR_REPOSITORY: yeongeopjung-dev-api
+      SSM_DOCUMENT: yeongeopjung-dev-deploy
+      INSTANCE_ID: i-07799fedd264604b9
     steps:
       - uses: actions/checkout@v6
         with:
@@ -53,3 +56,44 @@ jobs:
           fi
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'Verified ECR image: %s (%s)\n' "$image" "$digest"
+
+      - name: Deploy the current develop commit through SSM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          latest_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/develop" --jq '.object.sha')
+          if [[ "$latest_sha" != "$GITHUB_SHA" ]]; then
+            echo "Skipping $GITHUB_SHA because develop advanced to $latest_sha."
+            exit 0
+          fi
+
+          command_id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
+            --document-name "$SSM_DOCUMENT" --parameters "ImageTag=$GITHUB_SHA" \
+            --timeout-seconds 60 --query Command.CommandId --output text)
+          echo "SSM command: $command_id"
+
+          for attempt in {1..110}; do
+            if status=$(aws ssm get-command-invocation --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>&1); then
+              case "$status" in
+                Success)
+                  echo "Deployed and passed the health check: $GITHUB_SHA"
+                  exit 0
+                  ;;
+                Pending|InProgress|Delayed|Cancelling) ;;
+                *)
+                  echo "::error::SSM command $command_id finished with status $status."
+                  exit 1
+                  ;;
+              esac
+            elif [[ "$status" != *InvocationDoesNotExist* ]]; then
+              echo "::error::Could not read SSM command $command_id."
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Timed out waiting for SSM command $command_id."
+          exit 1
