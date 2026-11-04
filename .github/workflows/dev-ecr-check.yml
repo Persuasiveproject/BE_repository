@@ -1,0 +1,55 @@
+name: Development ECR check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - .github/workflows/dev-ecr-check.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-ecr-check
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AWS_REGION: ap-southeast-2
+      AWS_ACCOUNT_ID: '149320913208'
+      ECR_REPOSITORY: yeongeopjung-dev-api
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build --platform linux/amd64 --tag "development-api:$GITHUB_SHA" .
+
+      - name: Verify AWS access and publish the commit image
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          registry="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          image="$registry/$ECR_REPOSITORY:$GITHUB_SHA"
+          account=$(aws sts get-caller-identity --query Account --output text)
+          test "$account" = "$AWS_ACCOUNT_ID"
+          digest=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$GITHUB_SHA" --query 'images[0].imageId.imageDigest' --output text)
+          if [[ "$digest" == None ]]; then
+            trap 'docker logout "$registry" >/dev/null 2>&1 || true' EXIT
+            aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+            docker tag "development-api:$GITHUB_SHA" "$image"
+            docker push "$image"
+            digest=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+              --image-ids "imageTag=$GITHUB_SHA" --query 'images[0].imageId.imageDigest' --output text)
+          fi
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'Verified ECR image: %s (%s)\n' "$image" "$digest"
