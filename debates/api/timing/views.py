@@ -30,4 +30,5 @@ class DebateTimingView(APIView):
             "serverTime": date_time.to_representation(now),
             "endsAt": date_time.to_representation(debate.deadline),
             "remainingSeconds": remaining,
+            "isReadOnly": status != Debate.Status.OPEN,
         })
