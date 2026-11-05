@@ -22,3 +22,11 @@ def eligible_opinion(debate, participant, opinion_id):
                 400, "OPINION_DEBATE_MISMATCH", "Choose an eligible opinion in this debate.",
             )
     return opinion
+
+
+def require_current_version(participant, version):
+    if version is not None and participant.version != version:
+        raise StanceConflict(
+            "STANCE_CONFLICT", "Refresh the current stance before retrying.",
+            details={"currentStance": participant.current_stance, "version": participant.version},
+        )
