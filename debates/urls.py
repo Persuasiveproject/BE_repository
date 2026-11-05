@@ -2,8 +2,8 @@ from django.urls import include, path
 
 
 urlpatterns = [
-    path("", include("debates.part_c.joined.urls")),
-    path("", include("debates.part_c.stance.urls")),
-    path("", include("debates.part_c.timing.urls")),
-    path("", include("debates.part_c.result.urls")),
+    path("", include("debates.api.joined.urls")),
+    path("", include("debates.api.stance.urls")),
+    path("", include("debates.api.timing.urls")),
+    path("", include("debates.api.result.urls")),
 ]
