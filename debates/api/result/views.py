@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from debates.api_contract import ContractError, ContractResponseMixin
-from debates.models import Debate
+from debates.models import Debate, DebateStatistics
 from debates.serializers import utc
 
 
@@ -25,4 +25,14 @@ class DebateResultView(ContractResponseMixin, APIView):
             "status": Debate.Status.CLOSED,
             "closedAt": utc(debate.closed_at if debate.status == Debate.Status.CLOSED else debate.deadline),
         }
-        return Response({"data": header})
+        result = DebateStatistics.objects.filter(debate=debate).first()
+        if result is None:
+            raise ContractError(409, "RESULT_NOT_READY", "The result is being computed.")
+        return Response({"data": {
+            **header,
+            "counts": {
+                "totalParticipants": result.total_participants,
+                "opinionCount": result.opinion_count,
+                "rebuttalCount": result.rebuttal_count,
+            },
+        }})
