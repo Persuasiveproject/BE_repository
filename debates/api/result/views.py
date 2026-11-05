@@ -26,9 +26,21 @@ class DebateResultView(ContractResponseMixin, APIView):
             "status": Debate.Status.CLOSED,
             "closedAt": utc(debate.closed_at if debate.status == Debate.Status.CLOSED else debate.deadline),
         }
-        result = DebateStatistics.objects.filter(debate=debate).first()
+        result = None
+        if debate.status == Debate.Status.CLOSED:
+            result = DebateStatistics.objects.filter(debate=debate).first()
         if result is None:
-            raise ContractError(409, "RESULT_NOT_READY", "The result is being computed.")
+            failed = debate.result_retry_at is not None
+            raise ContractError(
+                409, "RESULT_NOT_READY",
+                "Check again shortly." if failed else "The result is being computed.",
+                details={
+                    "status": "FAILED" if failed else "PENDING",
+                    "title": header["title"],
+                    "closedAt": header["closedAt"],
+                },
+            )
+
         total = result.total_participants
         show_transitions = total >= MIN_TRANSITION_PARTICIPANTS
         final_counts = {
