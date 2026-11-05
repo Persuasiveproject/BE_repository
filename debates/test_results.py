@@ -8,6 +8,7 @@ from .models import Debate, DebateStatistics, Stance
 from .results import save_debate_statistics, summarize_stances
 from .tasks.closing import close_due_debates
 from .tasks.results import compute_pending_results
+from .result_state import clear_result_state, _redis, _key
 from rest_framework.test import APIClient
 from accounts.models import User
 from discussions.models import Opinion
@@ -23,6 +24,8 @@ class ResultFixture:
             creator=self.other, category=self.category, type=Debate.Type.QUICK,
             title="Debate", content="Topic", started_at=timezone.now(), status=Debate.Status.OPEN,
         )
+        clear_result_state(self.debate.pk)
+        self.addCleanup(clear_result_state, self.debate.pk)
         self.participant = self.join(self.user, 1, Stance.PRO)
         self.author = self.join(self.other, 2, Stance.CON)
         self.opinion = self.write_opinion(self.author)
@@ -130,10 +133,10 @@ class DebateFlowTests(ResultFixture, TestCase):
         self.assertEqual(failed.data["error"]["code"], "RESULT_NOT_READY")
         self.assertEqual(failed.data["error"]["details"]["status"], "FAILED")
 
-        Debate.objects.filter(pk=self.debate.pk).update(result_retry_at=timezone.now())
+        # Losing the ephemeral failure hint must not strand the durable work.
+        clear_result_state(self.debate.pk)
         self.assertEqual(compute_pending_results(), 1)
-        self.debate.refresh_from_db()
-        self.assertIsNone(self.debate.result_retry_at)
+        self.assertIsNone(_redis().get(_key(self.debate.pk)))
         self.assertEqual(self.client.get(url).status_code, 200)
 
     def test_sankey_visibility_changes_at_twenty_participants(self):

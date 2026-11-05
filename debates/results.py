@@ -1,5 +1,4 @@
 import logging
-from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Count, Q
@@ -8,9 +7,9 @@ from django.utils import timezone
 from discussions.models import Opinion
 
 from .models import Debate, DebateParticipant, DebateStatistics, Stance
+from .result_state import clear_result_state, get_result_state, set_result_state
 
 logger = logging.getLogger(__name__)
-RESULT_RETRY_DELAY = timedelta(minutes=1)
 MIN_TRANSITION_PARTICIPANTS = 20
 
 
@@ -41,28 +40,29 @@ def summarize_stances(groups):
 
 @transaction.atomic
 def compute_debate_result(debate_id):
-    debate = Debate.objects.select_for_update().filter(
+    # The lock lives until commit/rollback, independently of Redis TTL or worker life.
+    debate = Debate.objects.select_for_update(skip_locked=True).filter(
         pk=debate_id, status=Debate.Status.CLOSED,
     ).first()
     if debate is None or DebateStatistics.objects.filter(debate=debate).exists():
         return False
 
-    if debate.result_retry_at and debate.result_retry_at > timezone.now():
+    state = get_result_state(debate_id)
+    if (state and state["status"] == "FAILED"
+            and state["retry_after"] > timezone.now().timestamp()):
         return False
 
+    set_result_state(debate_id, "PENDING")
     try:
         with transaction.atomic():
             save_debate_statistics(debate)
     except Exception:
-        # Roll back just this result before recording the retry under the debate lock.
+        # Roll back the partial result before publishing failure under the same lock.
         logger.exception("Failed to compute result for debate %s", debate.pk)
-        debate.result_retry_at = timezone.now() + RESULT_RETRY_DELAY
-        debate.save(update_fields=["result_retry_at"])
+        set_result_state(debate_id, "FAILED")
         return False
 
-    if debate.result_retry_at is not None:
-        debate.result_retry_at = None
-        debate.save(update_fields=["result_retry_at"])
+    clear_result_state(debate_id)
     return True
 
 

@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -7,6 +8,7 @@ from rest_framework.views import APIView
 from debates.api_contract import ContractError, ContractResponseMixin
 from debates.models import Debate, DebateStatistics, Stance
 from debates.results import MIN_TRANSITION_PARTICIPANTS
+from debates.result_state import get_result_state
 from debates.serializers import utc
 
 
@@ -30,7 +32,17 @@ class DebateResultView(ContractResponseMixin, APIView):
         if debate.status == Debate.Status.CLOSED:
             result = DebateStatistics.objects.filter(debate=debate).first()
         if result is None:
-            failed = debate.result_retry_at is not None
+            state = get_result_state(debate.pk)
+            failed = state is not None and state["status"] == "FAILED"
+            if failed:
+                # A previous FAILED hint may survive a failed Redis write when a
+                # retry starts. The database lock is authoritative for processing.
+                with transaction.atomic():
+                    available = Debate.objects.select_for_update(skip_locked=True).filter(
+                        pk=debate.pk,
+                    ).values_list("pk", flat=True).first()
+                    if available is None:
+                        failed = False
             raise ContractError(
                 409, "RESULT_NOT_READY",
                 "Check again shortly." if failed else "The result is being computed.",

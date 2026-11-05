@@ -77,7 +77,6 @@ class Debate(models.Model):
     view_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
-    result_retry_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
     canceled_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, db_column="canceled_by", on_delete=models.SET_NULL,
