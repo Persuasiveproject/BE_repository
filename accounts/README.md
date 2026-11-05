@@ -13,5 +13,4 @@
 - 활성 회원 중 `role=ADMIN`인 계정만 관리자 권한을 갖는다. 관리자 계정 발급 흐름은 별도로 구현한다.
 - `UserIdentityVerification`은 회원별 본인 확인 상태를 저장한다. 본인 확인 제공자 연동과 재가입 승계는 이후 구현 범위다.
 
-초기 마이그레이션은 로컬 Docker의 PostgreSQL에 적용했다. 새 팀원은 저장소를 받은 뒤
-루트 README의 절차대로 `docker compose exec api python manage.py migrate`를 실행한다.
+각 개발 환경에서 저장소를 받은 뒤 루트 README의 절차에 따라 `docker compose exec api python manage.py migrate`를 실행한다.

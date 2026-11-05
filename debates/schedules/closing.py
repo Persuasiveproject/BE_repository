@@ -1,0 +1,1 @@
+BEAT_SCHEDULE = {}

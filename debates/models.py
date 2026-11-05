@@ -86,6 +86,12 @@ class Debate(models.Model):
 
     objects = DebateQuerySet.as_manager()
 
+    def effective_status(self, at):
+        # The caller loads the same deadline expression used by the closing task.
+        if self.status == self.Status.OPEN and self.deadline and self.deadline <= at:
+            return self.Status.CLOSED
+        return self.status
+
     class Meta:
         db_table = "debates"
 
