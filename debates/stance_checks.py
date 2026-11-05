@@ -30,3 +30,13 @@ def require_current_version(participant, version):
             "STANCE_CONFLICT", "Refresh the current stance before retrying.",
             details={"currentStance": participant.current_stance, "version": participant.version},
         )
+
+
+def require_open_debate(debate):
+    if debate.effective_status(timezone.now()) != Debate.Status.OPEN:
+        raise StanceConflict("DEBATE_NOT_OPEN", "This debate is no longer open.")
+
+
+def require_before_deadline(debate):
+    if debate.deadline is not None and debate.deadline <= timezone.now():
+        raise StanceConflict("DEBATE_NOT_OPEN", "This debate is no longer open.")
