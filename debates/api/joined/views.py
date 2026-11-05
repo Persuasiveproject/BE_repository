@@ -1,13 +1,14 @@
+from base64 import b64decode
 from urllib.parse import parse_qs, urlsplit
 
 from django.db.models import Prefetch, Q
 from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
-from rest_framework.pagination import CursorPagination
+from rest_framework.pagination import Cursor, CursorPagination
 from rest_framework.response import Response
 
-from debates.api_contract import ContractError, ContractResponseMixin, IsActiveMember
+from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant
 from .serializers import JoinedDebateSerializer
 
@@ -15,6 +16,25 @@ from .serializers import JoinedDebateSerializer
 class DebateCursorPagination(CursorPagination):
     page_size = 20
     ordering = "-id"
+
+    def decode_cursor(self, request):
+        encoded = request.query_params.get(self.cursor_query_param)
+        if encoded is None:
+            return None
+        try:
+            decoded = b64decode(encoded, validate=True).decode("ascii")
+            tokens = parse_qs(decoded, strict_parsing=True, keep_blank_values=True)
+            if tokens.keys() != {"p"} or len(tokens["p"]) != 1:
+                raise ValueError("Invalid cursor parameters.")
+            position = tokens["p"][0]
+            if (
+                not position.isascii() or not position.isdecimal() or len(position) > 19
+                or not 1 <= int(position) <= MAX_ID
+            ):
+                raise ValueError("Invalid cursor position.")
+            return Cursor(offset=0, reverse=False, position=position)
+        except ValueError as exc:
+            raise ContractError(400, "FILTER_INVALID", "Use a valid cursor.") from exc
 
     def get_paginated_response(self, data):
         next_link = self.get_next_link()
