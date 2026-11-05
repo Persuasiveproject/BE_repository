@@ -7,7 +7,7 @@
 | [timing](timing) | 서버 기준 타이머와 읽기 전용 전환 | 타이머 GET |
 | [result](result) | 집계 대기·실패 표시와 최종 결과 | #44 |
 
-각 폴더에 뷰와 URL이 있다. 기능을 브랜치로 나눌 때는 [debates/urls.py](../urls.py)의 해당 연결과 함께 가져간다.
+각 폴더에 뷰와 URL이 있다. 경로는 [debates/urls.py](../urls.py)에서 연결한다.
 입장 변경 트랜잭션은 [stance.py](../stance.py), 자동 마감과 집계 실행은 [tasks.py](../tasks.py),
 집계 계산은 [results.py](../results.py)에 있다. 공통 응답 형식과 모델은 기존 debates 앱을 사용한다.
 
