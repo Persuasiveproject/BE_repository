@@ -1,6 +1,6 @@
 # 영업중 백엔드
 
-영업중의 Django REST Framework 백엔드입니다. 이 문서는 `develop`에 병합된 코드와 개발 환경을 기준으로 설명합니다.
+영업중의 Django REST Framework 백엔드입니다. 이 문서는 해당 브랜치에 포함된 코드와 개발 환경을 기준으로 설명합니다.
 
 ## 프로젝트 구조
 
@@ -13,7 +13,7 @@
 | `Dockerfile`, `compose.yaml`, `.env.example` | 컨테이너 빌드와 로컬 실행 설정 |
 | `.github/workflows/` | CI 검사와 개발 서버 자동 배포 |
 
-현재 [URL 설정](config/urls.py)에 연결된 경로는 `GET /health/`와 Django 관리 화면 `/admin/`입니다. 토론·의견 등 기능의 모델과 마이그레이션은 포함되어 있으며, 기능 API 목록은 해당 URL이 `develop`에 연결될 때 갱신합니다.
+[URL 설정](config/urls.py)과 [토론 URL 설정](debates/urls.py)에서 이 브랜치의 경로를 확인합니다. 기능별 경로는 해당 구현과 함께 추가합니다.
 
 회원 모델은 [accounts/models.py](accounts/models.py)의 `accounts.User`이며, `users` 테이블을 사용합니다. 이메일은 고유 로그인 ID가 아니고, 크레딧은 소수점 아래 6자리까지 저장합니다. 다른 앱에서 회원을 참조할 때는 모델 관계에 `settings.AUTH_USER_MODEL`을, 실행 코드에는 `get_user_model()`을 사용합니다.
 
