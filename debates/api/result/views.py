@@ -5,7 +5,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from debates.api_contract import ContractError, ContractResponseMixin
-from debates.models import Debate, DebateStatistics
+from debates.models import Debate, DebateStatistics, Stance
+from debates.results import MIN_TRANSITION_PARTICIPANTS
 from debates.serializers import utc
 
 
@@ -28,11 +29,35 @@ class DebateResultView(ContractResponseMixin, APIView):
         result = DebateStatistics.objects.filter(debate=debate).first()
         if result is None:
             raise ContractError(409, "RESULT_NOT_READY", "The result is being computed.")
+        total = result.total_participants
+        show_transitions = total >= MIN_TRANSITION_PARTICIPANTS
+        final_counts = {
+            Stance.PRO: result.final_pro,
+            Stance.CON: result.final_con,
+            Stance.NEUTRAL: result.final_neutral,
+        }
         return Response({"data": {
             **header,
+            "finalStancePercentages": {
+                stance: round(count * 100 / total, 1) if total else 0.0
+                for stance, count in final_counts.items()
+            },
             "counts": {
-                "totalParticipants": result.total_participants,
+                "totalParticipants": total,
                 "opinionCount": result.opinion_count,
                 "rebuttalCount": result.rebuttal_count,
+                "finalPro": result.final_pro,
+                "finalCon": result.final_con,
+                "finalNeutral": result.final_neutral,
+                "stanceChangedCount": result.stance_changed_count if show_transitions else None,
+                "stanceKeptCount": result.stance_kept_count if show_transitions else None,
             },
+            "sankeyData": result.sankey_data if show_transitions else [],
+            # Keep demographics private until aggregation and withdrawal rules are settled.
+            "genderData": None,
+            "ageData": None,
+            "regionData": None,
+            "genderHidden": not show_transitions or result.gender_hidden,
+            "ageHidden": not show_transitions or result.age_hidden,
+            "computedAt": utc(result.computed_at),
         }})
