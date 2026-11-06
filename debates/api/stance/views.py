@@ -45,8 +45,11 @@ class MyStanceEventListView(ContractResponseMixin, APIView):
     permission_classes = [IsActiveMember]
 
     def get(self, request, debate_id):
-        participant = DebateParticipant.objects.exclude(debate__status=Debate.Status.DRAFT).filter(
-            debate_id=debate_id, user=request.user,
+        debate = get_object_or_404(
+            Debate.objects.exclude(status=Debate.Status.DRAFT), pk=debate_id,
+        )
+        participant = DebateParticipant.objects.filter(
+            debate=debate, user=request.user,
         ).first()
         if participant is None:
             raise ContractError(403, "NOT_PARTICIPANT", "Only participants can read their stance history.")
