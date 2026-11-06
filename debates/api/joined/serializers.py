@@ -22,5 +22,4 @@ class JoinedDebateSerializer(serializers.BaseSerializer):
             "endsAt": utc(debate.deadline),
             "closedAt": utc(closed_at),
             "canceledAt": utc(debate.canceled_at),
-            "currentStance": participant.current_stance,
         }

@@ -51,7 +51,11 @@ class JoinedDebateListTests(TestCase):
         self.assertEqual(item["id"], str(open_debate.pk))
         self.assertEqual(item["kind"], "ENDLESS")
         self.assertEqual(item["status"], "OPEN")
-        self.assertEqual(item["currentStance"], "NEUTRAL")
+        self.assertEqual(set(item), {
+            "id", "kind", "title", "status", "createdAt", "categoryId",
+            "participantCount", "opinionCount", "viewCount", "startedAt",
+            "endsAt", "closedAt", "canceledAt",
+        })
         error = self.client.get(self.url, {"status": "bad"})
         self.assertEqual(error.status_code, 400)
         self.assertEqual(error.data["error"]["code"], "FILTER_INVALID")

@@ -15,6 +15,7 @@ class Stance(models.TextChoices):
 class Category(models.Model):
     name = models.CharField(max_length=30, unique=True)
     sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         db_table = "categories"

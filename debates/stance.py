@@ -27,14 +27,18 @@ def change_stance(
     ):
         raise ContractError(400, "IDEMPOTENCY_KEY_INVALID", "Use a nonblank key of up to 128 characters.")
 
-    # All writes that race with closing should lock the debate before related rows.
+    # Lock order: debate -> user -> participant -> opinion. Account changes must
+    # not acquire the same rows in reverse order.
     debate = (
         Debate.objects.with_deadline().select_for_update()
         .exclude(status=Debate.Status.DRAFT).filter(pk=debate_id).first()
     )
     if debate is None:
         raise ContractError(404, "NOT_FOUND", "Debate not found.")
-    if user.status != User.Status.ACTIVE:
+    # Authentication may have loaded this user before waiting for the debate
+    # lock. Serialize against account suspension/deletion and recheck DB state.
+    account = User.objects.select_for_update().only("id", "status").filter(pk=user.pk).first()
+    if account is None or account.status != User.Status.ACTIVE:
         raise ContractError(403, "FORBIDDEN", "This account cannot change stance.")
 
     participant = DebateParticipant.objects.select_for_update().filter(
