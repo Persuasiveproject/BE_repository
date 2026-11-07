@@ -32,6 +32,15 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
+# ALB가 TLS를 종료하고 API 보안 그룹이 ALB만 허용하는 환경에서 활성화한다.
+if os.environ.get('DJANGO_BEHIND_HTTPS_PROXY', 'false').lower() == 'true':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SECURE_REDIRECT_EXEMPT = [r'^health/$']
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 3600
+
 
 # Application definition
 

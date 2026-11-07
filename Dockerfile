@@ -13,4 +13,6 @@ RUN groupadd --gid 1000 app \
 
 COPY . .
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+USER 1000:1000
+
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "config.wsgi:application"]

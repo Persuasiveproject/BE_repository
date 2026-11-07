@@ -145,6 +145,8 @@ DB가 초기화된 뒤 `.env`의 DB 비밀번호만 바꿔도 기존 DB 비밀�
 
 ## CI와 개발 배포
 
+`main` 전용 운영 배포와 필수 사전 설정은 [운영 배포 안내](docs/production-deployment.md)를 참고합니다. 개발 배포와 별도 EC2·ECR·SSM·자격 증명을 사용하며 운영 대상 설정 전에는 운영 CD를 완료한 것으로 간주하지 않습니다.
+
 - PR과 브랜치 푸시에서 [Backend CI](.github/workflows/ci.yml)가 Django 검사, 누락된 마이그레이션 확인, PostgreSQL 마이그레이션과 테스트, Celery 작업 확인을 실행합니다.
 - `develop` 푸시가 CI를 통과하면 [개발 배포 워크플로](.github/workflows/dev-ecr-check.yml)가 해당 커밋 SHA로 이미지를 빌드해 시드니 ECR에 게시합니다. SSM이 프라이빗 개발 EC2에서 이미지를 실행하고, DB 연결을 포함한 `/health/` 응답을 확인합니다.
 - 개발 EC2가 실행 중이고 SSM에서 명령을 받을 수 있어야 배포됩니다. 결과는 GitHub **Actions → Backend CI → Deploy development**에서 확인합니다.

@@ -50,6 +50,18 @@ jobs:
           docker compose run --rm --no-deps -T api python manage.py shell -c \
             "from config.tasks import ping; assert ping.delay().get(timeout=90) == 'pong'"
 
+      - name: Check production server and deployment safeguards
+        run: |
+          python scripts/check-production-deploy.py
+          docker run --rm --user 0 ye-backend:dev python scripts/check-production-rollback.py
+          docker compose run --rm --no-deps -T api gunicorn --check-config --config gunicorn.conf.py config.wsgi:application
+          docker compose run --rm --no-deps -T api sh -ec '
+            gunicorn --config gunicorn.conf.py config.wsgi:application &
+            server=$!
+            trap "kill $server 2>/dev/null || true; wait $server 2>/dev/null || true" EXIT
+            python scripts/check-health.py
+          '
+
       - name: Show service logs on failure
         if: failure()
         run: docker compose logs --no-color --tail 80 db redis worker
@@ -62,3 +74,31 @@ jobs:
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  deploy-production:
+    name: Deploy production
+    needs: backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: yeongeopjung-production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build and deploy main to the dedicated production host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AWS_REGION: ${{ vars.PRODUCTION_AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ vars.PRODUCTION_AWS_ACCOUNT_ID }}
+          ECR_REPOSITORY: ${{ vars.PRODUCTION_ECR_REPOSITORY }}
+          INSTANCE_ID: ${{ vars.PRODUCTION_INSTANCE_ID }}
+          SSM_DOCUMENT: ${{ vars.PRODUCTION_SSM_DOCUMENT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.PRODUCTION_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.PRODUCTION_AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.PRODUCTION_AWS_SESSION_TOKEN }}
+        run: bash scripts/deploy-production.sh
