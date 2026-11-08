@@ -53,6 +53,7 @@ jobs:
       - name: Check production server and deployment safeguards
         run: |
           python scripts/check-production-deploy.py
+          python scripts/check-result-runtime.py
           docker run --rm --user 0 ye-backend:dev python scripts/check-production-rollback.py
           docker compose run --rm --no-deps -T api gunicorn --check-config --config gunicorn.conf.py config.wsgi:application
           docker compose run --rm --no-deps -T api sh -ec '
