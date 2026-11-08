@@ -16,6 +16,11 @@ from .serializers import PostInput, post_created_data
 
 
 PUBLIC_DEBATE_STATES = (Debate.Status.OPEN, Debate.Status.CLOSED)
+POST_SORT_FIELDS = {
+    "latest": None,
+    "upvotes": "upvote_count",
+    "persuasion": "persuasion_count",
+}
 
 
 def visible_opinions():
@@ -64,8 +69,9 @@ class DebatePostListView(ContractResponseMixin, APIView):
     def get(self, request, debate_id):
         if not Debate.objects.filter(pk=debate_id, status__in=PUBLIC_DEBATE_STATES).exists():
             raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
-        if request.query_params.get("sort", "latest").lower() != "latest":
-            raise ContractError(400, "SORT_INVALID", "Use the latest sort.")
+        sort = request.query_params.get("sort", "latest").lower()
+        if sort not in POST_SORT_FIELDS:
+            raise ContractError(400, "SORT_INVALID", "Use latest, upvotes, or persuasion.")
         stance = request.query_params.get("stance")
         posts = visible_opinions().filter(
             debate_id=debate_id, debate__status__in=PUBLIC_DEBATE_STATES, parent__isnull=True,
@@ -74,7 +80,9 @@ class DebatePostListView(ContractResponseMixin, APIView):
             if stance not in Stance.values:
                 raise ContractError(400, "VALIDATION_ERROR", "Choose a valid stance.")
             posts = posts.filter(stance_at_write=stance)
-        return post_page(request, opinion_cards(posts), "posts", stance=stance)
+        return post_page(
+            request, opinion_cards(posts), "posts", stance=stance, score_field=POST_SORT_FIELDS[sort],
+        )
 
     @transaction.atomic
     def post(self, request, debate_id):

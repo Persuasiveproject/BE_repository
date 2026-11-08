@@ -198,6 +198,69 @@ class DebateBApiTests(DebateBFixture, TestCase):
         self.assertIsNone(second["meta"]["nextCursor"])
         self.assertEqual(self.client.get(self.posts_url, {"cursor": cursor}).json()["error"]["code"], "CURSOR_INVALID")
 
+    def test_post_list_supports_default_latest_upvotes_and_persuasion_order(self):
+        self.assertEqual(self.join().status_code, 201)
+        participant = DebateParticipant.objects.get(user=self.member)
+        posts = Opinion.objects.bulk_create([
+            Opinion(
+                debate=self.debate, participant=participant, stance_at_write=Stance.PRO,
+                content="Opinion", content_plain="Opinion", upvote_count=upvotes,
+                downvote_count=downvotes, persuasion_count=persuasions,
+            )
+            for upvotes, downvotes, persuasions in [(5, 0, 7), (5, 0, 7), (5, 0, 7), (8, 99, 1), (1, 0, 9)]
+        ])
+        for post, seconds_ago in zip(posts, (3, 1, 1, 4, 2)):
+            post.created_at = self.now - timedelta(seconds=seconds_ago)
+        Opinion.objects.bulk_update(posts, ["created_at"])
+
+        guest = APIClient()
+        for sort, order in [
+            (None, (2, 1, 4, 0, 3)),
+            ("latest", (2, 1, 4, 0, 3)),
+            ("upvotes", (3, 2, 1, 0, 4)),
+            ("persuasion", (4, 2, 1, 0, 3)),
+        ]:
+            with self.subTest(sort=sort):
+                query = {"sort": sort} if sort is not None else {}
+                response = guest.get(self.posts_url, query)
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual([post["postId"] for post in body["data"]["posts"]],
+                                 [str(posts[index].pk) for index in order])
+                self.assertEqual(body["meta"], {"nextCursor": None})
+
+    def test_score_sorts_page_through_ties_and_lower_scores_with_the_same_cursor_scope(self):
+        self.assertEqual(self.join().status_code, 201)
+        participant = DebateParticipant.objects.get(user=self.member)
+        posts = Opinion.objects.bulk_create([
+            Opinion(
+                debate=self.debate, participant=participant, stance_at_write=Stance.PRO,
+                content="Opinion", content_plain="Opinion", upvote_count=score, persuasion_count=score,
+            )
+            for score in [0, *([5] * 23), 10]
+        ])
+        Opinion.objects.update(created_at=self.now)
+        Opinion.objects.filter(pk=posts[0].pk).update(created_at=self.now + timedelta(seconds=1))
+        expected_ids = [str(posts[-1].pk), *(str(post.pk) for post in reversed(posts[1:-1])), str(posts[0].pk)]
+
+        for sort, other_sort in [("upvotes", "persuasion"), ("persuasion", "upvotes")]:
+            with self.subTest(sort=sort):
+                first = self.client.get(self.posts_url, {"sort": sort}).json()
+                cursor = first["meta"]["nextCursor"]
+                self.assertEqual([post["postId"] for post in first["data"]["posts"]], expected_ids[:20])
+                self.assertIsNotNone(cursor)
+                second = self.client.get(self.posts_url, {"sort": sort, "cursor": cursor}).json()
+                self.assertEqual([post["postId"] for post in second["data"]["posts"]], expected_ids[20:])
+                self.assertIsNone(second["meta"]["nextCursor"])
+                wrong_sort = self.client.get(self.posts_url, {"sort": other_sort, "cursor": cursor})
+                self.assertEqual(wrong_sort.status_code, 400)
+                self.assertEqual(wrong_sort.json()["error"]["code"], "CURSOR_INVALID")
+
+    def test_post_list_rejects_unknown_sort(self):
+        response = self.client.get(self.posts_url, {"sort": "unknown"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "SORT_INVALID")
+
 
 class DebateBConcurrencyTests(DebateBFixture, TransactionTestCase):
     def submit_concurrently(self, url, data, keys):
