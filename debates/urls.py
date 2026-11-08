@@ -7,4 +7,5 @@ urlpatterns = [
     path("", include("debates.api.timing.urls")),
     path("", include("debates.api.result.urls")),
     path("", include("debates.api.draft.urls")),
+    path("", include("debates.api.detail.urls")),
 ]
