@@ -1,15 +1,11 @@
-import hashlib
-import json
-from datetime import timedelta
-
 from django.db import transaction
-from django.utils import timezone
-from accounts.models import APIIdempotencyRecord, User
+from accounts.models import User
 from discussions.models import Persuasion
 
 from .api_contract import ContractError
+from .idempotency import request_hash, require_valid_key, save_response, saved_response
 from .models import Debate, DebateParticipant, StanceHistory
-from .stance_checks import (
+from .stance_checks import (  # StanceConflict is re-exported for callers.
     StanceConflict, eligible_opinion, require_before_deadline, require_current_version,
     require_open_debate,
 )
@@ -19,13 +15,7 @@ from .stance_checks import (
 def change_stance(
     *, debate_id, user, stance, idempotency_key, request_path, opinion_id=None, version=None,
 ):
-    if (
-        not idempotency_key
-        or len(idempotency_key) > 128
-        or not idempotency_key.strip()
-        or any(ord(char) < 32 or ord(char) == 127 for char in idempotency_key)
-    ):
-        raise ContractError(400, "IDEMPOTENCY_KEY_INVALID", "Use a nonblank key of up to 128 characters.")
+    require_valid_key(idempotency_key)
 
     # Lock order: debate -> user -> participant -> opinion. Account changes must
     # not acquire the same rows in reverse order.
@@ -53,21 +43,10 @@ def change_stance(
         "request_path": request_path,
         "idempotency_key": idempotency_key,
     }
-    request_hash = hashlib.sha256(
-        json.dumps([stance, opinion_id, version]).encode(),
-    ).hexdigest()
-    saved = APIIdempotencyRecord.objects.filter(
-        **scope, expires_at__gt=timezone.now(),
-    ).first()
+    body_hash = request_hash([stance, opinion_id, version])
+    saved = saved_response(scope, body_hash)
     if saved is not None:
-        if saved.request_hash != request_hash:
-            raise StanceConflict("IDEMPOTENCY_KEY_REUSED", "This key was used with a different request.")
-        if saved.status != APIIdempotencyRecord.Status.COMPLETED:
-            raise StanceConflict("REQUEST_PROCESSING", "The original request is still processing.")
-        if not isinstance(saved.response_body, dict) or "data" not in saved.response_body:
-            # Legacy responses have no event ID. Keep the key occupied without replaying or mutating.
-            raise StanceConflict("IDEMPOTENCY_KEY_REUSED", "This key belongs to an earlier API response format.")
-        return saved.response_body, saved.response_status
+        return saved
 
     require_open_debate(debate)
     require_current_version(participant, version)
@@ -96,14 +75,5 @@ def change_stance(
         "persuasionId": str(persuasion.pk) if persuasion is not None else None,
         "reward": None,
     }}
-    APIIdempotencyRecord.objects.update_or_create(
-        **scope,
-        defaults={
-            "request_hash": request_hash,
-            "status": APIIdempotencyRecord.Status.COMPLETED,
-            "response_status": 200,
-            "response_body": response,
-            "expires_at": timezone.now() + timedelta(hours=24),
-        },
-    )
+    save_response(scope, body_hash, response, 200)
     return response, 200
