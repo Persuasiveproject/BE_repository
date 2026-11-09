@@ -10,6 +10,11 @@ class StanceChangeInput(serializers.Serializer):
     opinionId = serializers.RegexField(r"\A[1-9][0-9]{0,18}\Z", required=False, trim_whitespace=False)
     version = serializers.IntegerField(min_value=0, max_value=2**31 - 1, required=False)
 
+    def validate_version(self, value):
+        if type(self.initial_data["version"]) is not int:
+            raise serializers.ValidationError("Use an integer.")
+        return value
+
     def validate_opinionId(self, value):
         if not isinstance(self.initial_data["opinionId"], str) or int(value) > MAX_ID:
             raise serializers.ValidationError("Use a positive 64-bit ID as a decimal string.")
