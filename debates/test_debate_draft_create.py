@@ -109,6 +109,20 @@ class DebateDraftCreateTests(TestCase):
         self.assert_invalid(self.body(durationMinutes="10"), "durationMinutes")
         self.assert_invalid(self.body(kind="ENDLESS", durationMinutes=10), "durationMinutes")
 
+    def test_text_fields_require_json_strings(self):
+        for field in ("title", "content"):
+            for value in (12345, 12.5, True, False, None, [], {}):
+                with self.subTest(field=field, value=value):
+                    self.assert_invalid(self.body(**{field: value}), field)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.coin_balance, 50)
+
+    def test_numeric_text_strings_are_preserved(self):
+        response = self.post(self.body(title="12345", content="1234567890"))
+        self.assertEqual(response.status_code, 201)
+        debate = Debate.objects.get()
+        self.assertEqual((debate.title, debate.content), ("12345", "1234567890"))
+
     def test_invalid_category_id(self):
         for value in (self.category.pk, "abc", "0", str(2**63)):
             self.assert_invalid(self.body(categoryId=value), "categoryId")

@@ -111,6 +111,20 @@ class DebateDraftUpdateTests(TestCase):
             response = self.assert_error({field: None}, 400, "DRAFT_INVALID")
             self.assertIn(field, response.json()["error"]["details"])
 
+    def test_text_fields_require_json_strings_without_partial_updates(self):
+        for field in ("title", "content"):
+            for value in (12345, 12.5, True, False, None, [], {}):
+                with self.subTest(field=field, value=value):
+                    body = {"title": "Changed title", "content": "Changed content", field: value}
+                    response = self.assert_error(body, 400, "DRAFT_INVALID")
+                    self.assertIn(field, response.json()["error"]["details"])
+
+    def test_numeric_text_strings_are_preserved(self):
+        response = self.patch({"title": "12345", "content": "1234567890"})
+        self.assertEqual(response.status_code, 200)
+        self.debate.refresh_from_db()
+        self.assertEqual((self.debate.title, self.debate.content), ("12345", "1234567890"))
+
     def test_category_not_found(self):
         inactive = Category.objects.create(name="Hidden", is_active=False)
         for category_id in ("999999", str(inactive.pk)):
