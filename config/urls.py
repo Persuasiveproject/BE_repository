@@ -20,6 +20,7 @@ from .views import health
 
 urlpatterns = [
     path('v1/', include('debates.urls')),
+    path('v1/', include('engagement.urls')),
     path('health/', health, name='health'),
     path('admin/', admin.site.urls),
 ]
