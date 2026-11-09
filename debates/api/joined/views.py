@@ -1,7 +1,7 @@
 from base64 import b64decode
 from urllib.parse import parse_qs, urlsplit
 
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch
 from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
@@ -9,6 +9,7 @@ from rest_framework.pagination import Cursor, CursorPagination
 from rest_framework.response import Response
 
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
+from debates.listing import filter_visible
 from debates.models import Debate, DebateParticipant
 from .serializers import JoinedDebateSerializer
 
@@ -16,6 +17,7 @@ from .serializers import JoinedDebateSerializer
 class DebateCursorPagination(CursorPagination):
     page_size = 20
     ordering = "-id"
+    invalid_cursor_code = "FILTER_INVALID"
 
     def decode_cursor(self, request):
         encoded = request.query_params.get(self.cursor_query_param)
@@ -34,7 +36,7 @@ class DebateCursorPagination(CursorPagination):
                 raise ValueError("Invalid cursor position.")
             return Cursor(offset=0, reverse=False, position=position)
         except ValueError as exc:
-            raise ContractError(400, "FILTER_INVALID", "Use a valid cursor.") from exc
+            raise ContractError(400, self.invalid_cursor_code, "Use a valid cursor.") from exc
 
     def get_paginated_response(self, data):
         next_link = self.get_next_link()
@@ -43,7 +45,6 @@ class DebateCursorPagination(CursorPagination):
 
 
 class JoinedDebateListView(ContractResponseMixin, ListAPIView):
-    visible_statuses = (Debate.Status.OPEN, Debate.Status.CLOSED)
     serializer_class = JoinedDebateSerializer
     permission_classes = [IsActiveMember]
     pagination_class = DebateCursorPagination
@@ -53,17 +54,8 @@ class JoinedDebateListView(ContractResponseMixin, ListAPIView):
         return timezone.now()
 
     def get_queryset(self):
-        status = self.request.query_params.get("status")
-        if status is not None and status not in self.visible_statuses:
-            raise ContractError(400, "FILTER_INVALID", "Use OPEN or CLOSED.")
         debates = Debate.objects.with_deadline()
-        visible = debates.filter(status__in=self.visible_statuses)
-        if status == Debate.Status.OPEN:
-            visible = visible.filter(status=Debate.Status.OPEN).filter(
-                Q(deadline__isnull=True) | Q(deadline__gt=self.as_of),
-            )
-        if status == Debate.Status.CLOSED:
-            visible = visible.filter(Q(status=Debate.Status.CLOSED) | Q(deadline__lte=self.as_of))
+        visible = filter_visible(debates, self.request.query_params.get("status"), self.as_of)
         return DebateParticipant.objects.filter(
             user=self.request.user, debate__in=visible,
         ).prefetch_related(Prefetch("debate", queryset=debates))
