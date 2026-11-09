@@ -9,7 +9,7 @@ from debates.models import Category, Debate
 class DebateDraftCreateTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.url = reverse("debate-draft-create")
+        self.url = reverse("debate-list")
         self.user = User.objects.create_user("writer@example.com", "Writer", coin_balance=50)
         self.category = Category.objects.create(name="Politics")
         self.client.force_authenticate(self.user)
@@ -48,6 +48,25 @@ class DebateDraftCreateTests(TestCase):
         self.assertIsNone(debate.ends_at)
         self.user.refresh_from_db()
         self.assertEqual(self.user.coin_balance, 50)
+
+    def test_shared_url_keeps_public_get_and_authenticated_post(self):
+        self.assertEqual(self.url, "/v1/debates")
+        guest = APIClient()
+        self.assertEqual(guest.get(self.url).status_code, 200)
+        denied = guest.post(self.url, self.body(), format="json")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(denied.json()["error"]["code"], "AUTHENTICATION_REQUIRED")
+        self.assertFalse(Debate.objects.exists())
+
+        created = self.post(self.body())
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(Debate.objects.get().status, Debate.Status.DRAFT)
+        for client in (guest, self.client):
+            response = client.get(self.url)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {
+                "data": {"debates": []}, "meta": {"nextCursor": None},
+            })
 
     def test_creates_endless_draft_without_duration(self):
         omitted = self.body(kind="ENDLESS")
