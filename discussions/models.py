@@ -30,6 +30,7 @@ class Opinion(models.Model):
         blank=True,
     )
     stance_at_write = models.CharField(max_length=7, choices=Stance.choices)
+    badge = models.ForeignKey("economy.Badge", null=True, blank=True, on_delete=models.SET_NULL)
     content = models.TextField()
     content_plain = models.TextField()
     upvote_count = models.PositiveIntegerField(default=0)
