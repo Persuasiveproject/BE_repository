@@ -34,7 +34,7 @@ class DebateListView(ContractResponseMixin, ListAPIView):
 
     def get_queryset(self):
         params = self.request.query_params
-        # ponytail: latest only; add popularity sort once its score is defined.
+                # Latest only until the popularity score is defined.
         if params.get("sort", "latest") != "latest":
             raise filter_invalid("Use latest.")
         debates = filter_visible(Debate.objects.with_deadline(), params.get("status"), self.as_of)
