@@ -14,6 +14,12 @@ UTC 시각 변환은 debates/serializers.py의 utc 함수를 사용한다.
 기능 동작 테스트와 별도로 요청·응답의 전체 필드, 타입·필수·null, 상태·오류 코드를 확인한다.
 기능명세와 API 명세가 충돌하거나 표현이 보류된 항목은 테스트 통과와 별개로 합의 필요로 남긴다.
 
+### #15 목록 조회와 #17 초안 생성
+
+`/v1/debates`는 `debates/api/debates/views.py`의 `DebateListView` 한 곳에서 처리한다.
+GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은 `debate-list`다.
+초안 생성의 입력 검증·오류·응답과 코인 미차감 동작은 유지한다.
+
 ### #44 최종 통계
 
 `GET /v1/debates/:debateId/result`의 성공 응답은 `data` 아래에 다음 값만 반환한다.

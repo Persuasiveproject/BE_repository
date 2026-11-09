@@ -4,11 +4,15 @@ from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 
+from debates.api.draft.serializers import DraftInput
+from debates.api.draft.views import active_category, validated_draft
 from debates.api.joined.views import DebateCursorPagination
-from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin
+from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.listing import filter_visible
 from debates.models import Category, Debate
+from debates.serializers import utc
 from .serializers import DebateListSerializer
 
 
@@ -25,8 +29,26 @@ def filter_invalid(message):
 
 class DebateListView(ContractResponseMixin, ListAPIView):
     serializer_class = DebateListSerializer
-    permission_classes = [AllowAny]
     pagination_class = PublicDebateCursorPagination
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsActiveMember()]
+        return [AllowAny()]
+
+    def post(self, request):
+        data = validated_draft(DraftInput(data=request.data))
+        category = active_category(data["categoryId"])
+        debate = Debate.objects.create(
+            creator=request.user, category=category, type=data["kind"],
+            title=data["title"], content=data["content"],
+            duration_minutes=data.get("durationMinutes"),
+        )
+        return Response({"data": {
+            "debateId": str(debate.pk),
+            "status": debate.status,
+            "createdAt": utc(debate.created_at),
+        }}, status=201)
 
     @cached_property
     def as_of(self):
@@ -34,7 +56,7 @@ class DebateListView(ContractResponseMixin, ListAPIView):
 
     def get_queryset(self):
         params = self.request.query_params
-                # Latest only until the popularity score is defined.
+        # Latest only until the popularity score is defined.
         if params.get("sort", "latest") != "latest":
             raise filter_invalid("Use latest.")
         debates = filter_visible(Debate.objects.with_deadline(), params.get("status"), self.as_of)
