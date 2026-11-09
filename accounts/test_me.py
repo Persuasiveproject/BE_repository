@@ -1,3 +1,4 @@
+from base64 import b64encode
 from datetime import timedelta
 from decimal import Decimal
 
@@ -110,6 +111,24 @@ class MeTests(TestCase):
         self.client.force_authenticate(None)
 
         response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "AUTH_REQUIRED")
+
+    def test_invalid_credentials_use_profile_auth_error(self):
+        self.client.force_authenticate(None)
+        credentials = b64encode(f"{self.user.pk}:wrong-password".encode()).decode()
+
+        response = self.client.get(self.url, HTTP_AUTHORIZATION=f"Basic {credentials}")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "AUTH_REQUIRED")
+        self.assertNotIn("wrong-password", response.content.decode())
+
+    def test_other_endpoints_keep_their_auth_error(self):
+        self.client.force_authenticate(None)
+
+        response = self.client.get("/v1/me/debates")
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "AUTHENTICATION_REQUIRED")

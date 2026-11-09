@@ -13,6 +13,13 @@ class MeView(ContractResponseMixin, APIView):
     # Suspended members can still read their own profile.
     permission_classes = [IsAuthenticated]
 
+    def handle_exception(self, exc):
+        response = super().handle_exception(exc)
+        if response.status_code == 401:
+            # API #6 defines AUTH_REQUIRED for profile authentication failures.
+            response.data["error"]["code"] = "AUTH_REQUIRED"
+        return response
+
     def get(self, request):
         user = request.user
         interests = (
