@@ -23,6 +23,12 @@ UTC 시각 변환은 debates/serializers.py의 utc 함수를 사용한다.
 - P1 본문은 앞뒤 공백을 제거한 일반 텍스트 1~1,000자로 저장한다. 앱에서도 일반 텍스트로 표시한다. 첨부 근거 링크는 글당 최대 3개의 HTTP(S) 주소이며 검사 대기로 저장한다.
 - 의견과 반박에는 작성 당시 대표 배지를 연결한다. 공개 카드의 `badge`는 `{badgeId, name, iconUrl}` 또는 `null`이다. 이 필드는 P1 카드 요구사항을 반영한 추가 응답으로 API 엑셀과 동기화가 필요하다.
 
+### #15 목록 조회와 #17 초안 생성
+
+`/v1/debates`는 `debates/api/debates/views.py`의 `DebateListView` 한 곳에서 처리한다.
+GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은 `debate-list`다.
+초안 생성의 입력 검증·오류·응답과 코인 미차감 동작은 유지한다.
+
 ### #44 최종 통계
 
 `GET /v1/debates/:debateId/result`의 성공 응답은 `data` 아래에 다음 값만 반환한다.
@@ -94,3 +100,7 @@ UTC 시각 변환은 debates/serializers.py의 utc 함수를 사용한다.
 공통 기반만 반영된 상태에서는 기능 API와 마감·집계 일정이 활성화되지 않는다.
 
 커밋 설명은 한국어로 작성하며 기능은 feat:, 수정은 fix:, 문서는 docs: 접두사를 사용한다.
+
+### #18 수정과 #23 상세 조회 통합
+
+`/v1/debates/:debateId`는 `debates/api/detail/views.py`에서 GET과 PATCH를 함께 처리하고 한 번만 등록한다. GET의 공개 조회·초안 작성자 제한과 PATCH의 ACTIVE 회원·작성자·DRAFT 검증은 각각 유지한다. 참여 경로에는 최초 참여 POST만 등록한다.
