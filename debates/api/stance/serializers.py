@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from debates.api_contract import MAX_ID
-from debates.models import DebateParticipant, Stance
+from debates.models import Stance
 from debates.serializers import utc
 
 
@@ -14,15 +14,6 @@ class StanceChangeInput(serializers.Serializer):
         if not isinstance(self.initial_data["opinionId"], str) or int(value) > MAX_ID:
             raise serializers.ValidationError("Use a positive 64-bit ID as a decimal string.")
         return int(value)
-
-
-class StanceStateSerializer(serializers.ModelSerializer):
-    initialStance = serializers.CharField(source="initial_stance")
-    currentStance = serializers.CharField(source="current_stance")
-
-    class Meta:
-        model = DebateParticipant
-        fields = ("initialStance", "currentStance", "version")
 
 
 class StanceEventSerializer(serializers.BaseSerializer):

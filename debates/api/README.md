@@ -69,20 +69,20 @@ GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은
 | 집계 중·실패 안내 구분 | FC-DB-300-009 | `RESULT_NOT_READY`의 PENDING/FAILED |
 
 위 정보의 기능상 필요성이 API 명세 등록을 대신하지는 않는다. 필드·경로·오류 정의를 팀과 확정해야 한다.
-현재 #26 PATCH 성공 응답에는 `version`이 없다. 내 입장 GET 또는 충돌 오류에서 얻으며, 요청에서 생략하면 버전 비교는 수행하지 않는다.
+현재 #26 PATCH 성공 응답에는 `version`이 없다. 충돌 오류는 최신 version을 제공하고, 요청에서 version을 생략하면 버전 비교를 수행하지 않는다. 내 입장 GET은 제거했으며 #23 Participation에 version을 추가해 초기값을 제공할지는 명세 합의가 필요하다.
 
 ### 합의 전 유지하는 부분과 후속 작업
 
-- 내 입장 GET과 timing GET은 사용자 요청에 따라 이번 정리에서 그대로 유지한다. 두 경로를 상세 API #23에 통합할지 또는 별도 명세에 등록할지는 후속 결정한다.
-- 두 GET의 `data` 포장, timing의 숫자 ID·시간대·오류 형식 등 공통 계약 차이도 후속 정리 대상이다. 현재 응답을 완전한 명세 일치로 판정하지 않는다.
+- 명세에 없는 내 입장 GET은 제거했다. 같은 주소의 PATCH #26과 이력 GET #27은 유지한다. 최초·현재 입장 조회는 명세 #23의 myParticipation을 사용하며 #23 연동은 별도다. timing GET은 유지하고 #23 통합 또는 명세 등록 여부를 후속 결정한다.
+- timing GET의 `data` 포장·숫자 ID·시간대·오류 형식 등 공통 계약 차이도 후속 정리 대상이다. 현재 응답을 완전한 명세 일치로 판정하지 않는다.
 - `sankeyData=[]`, JSON 내부 구조, 멱등 TTL·처리 중 오류, 자기 의견/동일 입장 정책 등 나머지 표현·정책 보류 항목은 이번 정리에서 변경하지 않는다.
 - 성별·연령·지역 통계는 현재 개발 범위 밖이다. 보상 지급 등 미구현도 완료로 표시하지 않는다.
-- #23 응답과 두 GET의 통합 여부는 다음 회의에서 확정한다.
+- #23 응답과 timing GET의 통합 여부는 후속 합의한다. #23 상세 조회와 새 글 작성 API는 #29로 통합됐으며, 내 입장 GET은 제거한 상태다.
 
 `debates.test_api_contract`는 #44 성공 DTO의 전체 키·정수·boolean·UTC와 대기·실패 오류의 중복 정보 제거를 검사한다.
 `debates.test_spec_contract_independent`는 구현·기존 테스트를 보지 않고 작성한 #26/#27/#28/#44의
 응답 전체 키·타입·null·입력·권한·오류와 공개 HTTP 기능 검사이며, 합의된 null/400 변경을 반영했다.
-테스트 통과가 보류 JSON 내부 구조·모든 입력 조합·추가 GET까지 전체 명세 적합을 보장하지 않는다.
+테스트 통과가 보류 JSON 내부 구조·모든 입력 조합·timing GET까지 전체 명세 적합을 보장하지 않는다.
 인증은 force_authenticate로 주입하며 실제 로그인·프론트·배포 연동은 별도다.
 
 ## 기능 PR 순서
@@ -91,7 +91,7 @@ GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은
 | --- | --- |
 | 참여 목록 | joined-debates-list → joined-debates-pagination |
 | 타이머와 마감 | debate-remaining-time → debate-read-only |
-| 입장 변경 | my-stance-state → stance-opinion-validation → stance-version-validation → stance-deadline-validation → stance-change-apply |
+| 입장 변경 | stance-opinion-validation → stance-version-validation → stance-deadline-validation → stance-change-apply |
 | 결과 조회 | debate-result-header → debate-result-counts → debate-final-stance-statistics → debate-result-computation |
 
 브랜치 이름에는 feat/ 접두사를 사용한다. 각 PR은 아직 병합되지 않은 선행 기능을 대상으로 비교하고,
