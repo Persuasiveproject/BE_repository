@@ -69,10 +69,22 @@ class ChangeStanceServiceTests(StanceFixture, TestCase):
 
 
 class ChangeStanceAPITests(StanceFixture, TestCase):
+    def test_removed_get_does_not_expose_stance_and_patch_remains_available(self):
+        url = f"/v1/debates/{self.debate.pk}/me/stance"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.json()["error"]["code"], "METHOD_NOT_ALLOWED")
+        self.assertNotIn("data", response.json())
+        self.assertNotIn("GET", response["Allow"])
+        self.assertIn("PATCH", response["Allow"])
+        self.assertEqual(self.patch_stance().status_code, 200)
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.participant.refresh_from_db()
+        self.assertEqual(self.participant.current_stance, Stance.CON)
+        self.assertEqual(StanceHistory.objects.count(), 1)
+
     def test_changes_stance_and_rejects_a_stale_retry(self):
         original = self.write_opinion(self.participant)
-        state = self.client.get(reverse("my-stance", args=[self.debate.id]))
-        self.assertEqual(state.data["version"], 0)
 
         response = self.patch_stance()
         self.assertEqual(response.status_code, 200)
@@ -144,7 +156,6 @@ class ChangeStanceAPITests(StanceFixture, TestCase):
         self.user.save(update_fields=["status"])
         responses = (
             self.patch_stance(),
-            self.client.get(reverse("my-stance", args=[self.debate.id])),
             self.client.get(reverse("my-stance-events", args=[self.debate.id])),
         )
         for response in responses:
