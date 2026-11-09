@@ -1,10 +1,8 @@
 from django.db import transaction
 from django.db.models import F
-from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import User, UserIdentityVerification
 from debates.api.writes import IdempotentWrite, lock_debate_for_write
 from debates.api_contract import ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant
@@ -25,11 +23,8 @@ class JoinDebateView(ContractResponseMixin, APIView):
         if (saved := write.replay()) is not None:
             return Response(saved[0], status=saved[1])
 
-        verified = UserIdentityVerification.objects.select_for_update().filter(
-            user=request.user, status=UserIdentityVerification.Status.VERIFIED,
-        ).exists()
-        if not verified:
-            raise ContractError(403, "IDENTITY_VERIFICATION_REQUIRED", "Verify your identity before joining.")
+        # Demo policy: ACTIVE members may join without identity verification.
+        # See docs/api25-demo-participation.md for scope and the spec override.
         require_open_debate(debate)
         participants = DebateParticipant.objects.filter(debate=debate)
         if participants.filter(user=request.user).exists():

@@ -20,11 +20,6 @@ class DebateBFixture:
         self.member = User.objects.create_user("member@example.com", "Private nickname")
         self.creator = User.objects.create_user("creator@example.com", "Creator")
         self.now = timezone.now()
-        UserIdentityVerification.objects.create(
-            user=self.member, provider="test", request_id="identity-test",
-            status=UserIdentityVerification.Status.VERIFIED, expires_at=self.now + timedelta(minutes=5),
-            verified_at=self.now,
-        )
         self.debate = Debate.objects.create(
             creator=self.creator, category=Category.objects.create(name="Society"), type=Debate.Type.QUICK,
             title="Debate", content="Topic", duration_minutes=10, started_at=self.now,
@@ -92,11 +87,49 @@ class DebateBApiTests(DebateBFixture, TestCase):
         self.assertEqual(detail["participantCount"], 1)
         self.assertEqual(DebateParticipant.objects.count(), 1)
 
-    def test_join_requires_verified_identity_and_a_valid_key(self):
+    def test_join_still_requires_a_valid_key_without_identity(self):
         self.client.force_authenticate(user=self.creator)
-        self.assertEqual(self.join().json()["error"]["code"], "IDENTITY_VERIFICATION_REQUIRED")
         response = self.client.post(self.join_url, {"stance": Stance.PRO}, format="json")
+        self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "IDEMPOTENCY_KEY_INVALID")
+        self.assertFalse(DebateParticipant.objects.exists())
+        self.assertFalse(APIIdempotencyRecord.objects.exists())
+
+    def test_demo_join_without_identity_does_not_mark_account_verified(self):
+        self.assertFalse(UserIdentityVerification.objects.filter(user=self.member).exists())
+        self.assertEqual(self.join().status_code, 201)
+        self.assertFalse(UserIdentityVerification.objects.filter(user=self.member).exists())
+        profile = self.client.get("/v1/me").json()["data"]
+        self.assertIs(profile["identityVerified"], False)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.status, User.Status.ACTIVE)
+
+    def test_identity_status_does_not_block_demo_participation_or_change_verification(self):
+        for status in UserIdentityVerification.Status.values:
+            with self.subTest(status=status):
+                user = User.objects.create_user(f"{status.lower()}@example.com", status)
+                verification = UserIdentityVerification.objects.create(
+                    user=user, provider="test", request_id=f"identity-{status}", status=status,
+                    expires_at=self.now + timedelta(minutes=5),
+                    verified_at=self.now if status == UserIdentityVerification.Status.VERIFIED else None,
+                )
+                before = UserIdentityVerification.objects.filter(pk=verification.pk).values().get()
+                self.client.force_authenticate(user)
+                self.assertEqual(self.join().status_code, 201)
+                self.assertEqual(UserIdentityVerification.objects.filter(pk=verification.pk).values().get(), before)
+                self.assertIs(self.client.get("/v1/me").json()["data"]["identityVerified"],
+                              status == UserIdentityVerification.Status.VERIFIED)
+
+    def test_demo_join_still_requires_an_authenticated_active_member(self):
+        guest = APIClient()
+        response = guest.post(self.join_url, {"stance": Stance.PRO}, format="json", headers={"Idempotency-Key": "guest"})
+        self.assertEqual((response.status_code, response.json()["error"]["code"]), (401, "AUTHENTICATION_REQUIRED"))
+        for status in (User.Status.SUSPENDED, User.Status.DELETED):
+            with self.subTest(status=status):
+                self.member.status = status
+                self.member.save(update_fields=["status"])
+                response = self.join()
+                self.assertEqual((response.status_code, response.json()["error"]["code"]), (403, "FORBIDDEN"))
         self.assertFalse(DebateParticipant.objects.exists())
         self.assertFalse(APIIdempotencyRecord.objects.exists())
 
