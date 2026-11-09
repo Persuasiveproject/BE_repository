@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 
 @shared_task(name="debates.tasks.compute_pending_results")
 def compute_pending_results():
-    # Beat is the only retry owner. Never combine this sweep with task.retry().
+    # This sweep is for the Celery-beat deployment option. The management-command
+    # runtime uses its own timer instead: enable exactly one retry scheduler.
+    # Never combine a periodic sweep with task.retry().
     # Scan past cooling-down/locked rows, so 100 failures cannot starve later IDs.
     debate_ids = (
         Debate.objects.filter(
