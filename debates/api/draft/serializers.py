@@ -20,9 +20,13 @@ class DraftInput(serializers.Serializer):
         return int(value)
 
     def validate_title(self, value):
+        if not isinstance(self.initial_data["title"], str):
+            raise serializers.ValidationError("Use a string.")
         return self._not_whitespace(value)
 
     def validate_content(self, value):
+        if not isinstance(self.initial_data["content"], str):
+            raise serializers.ValidationError("Use a string.")
         return self._not_whitespace(value)
 
     def validate_durationMinutes(self, value):

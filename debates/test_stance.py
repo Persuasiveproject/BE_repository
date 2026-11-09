@@ -69,6 +69,37 @@ class ChangeStanceServiceTests(StanceFixture, TestCase):
 
 
 class ChangeStanceAPITests(StanceFixture, TestCase):
+    def test_version_requires_a_json_integer_without_side_effects(self):
+        for value in ("0", "0.0", 0.0, 1.5, True, False, None, [], {}, -1, 2**31):
+            with self.subTest(version=value):
+                response = self.patch_stance(version=value)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+                self.assertIn("version", response.json()["error"]["details"])
+                self.participant.refresh_from_db()
+                self.assertEqual((self.participant.current_stance, self.participant.version), (Stance.PRO, 0))
+                self.assertFalse(StanceHistory.objects.exists())
+                self.assertFalse(Persuasion.objects.exists())
+                self.assertFalse(APIIdempotencyRecord.objects.exists())
+
+    def test_integer_version_and_original_response_are_preserved(self):
+        for version, stance in ((0, Stance.CON), (1, Stance.NEUTRAL)):
+            response = self.patch_stance(key=f"version-{version}", version=version, stance=stance)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(set(response.json()["data"]), {"currentStance", "eventId", "persuasionId", "reward"})
+            self.participant.refresh_from_db()
+            self.assertEqual((self.participant.current_stance, self.participant.version), (stance, version + 1))
+
+    def test_version_can_still_be_omitted(self):
+        response = self.client.patch(
+            reverse("my-stance", args=[self.debate.pk]),
+            {"stance": Stance.CON, "opinionId": str(self.opinion.pk)},
+            format="json", headers={"Idempotency-Key": "without-version"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.participant.refresh_from_db()
+        self.assertEqual(self.participant.version, 1)
+
     def test_removed_get_does_not_expose_stance_and_patch_remains_available(self):
         url = f"/v1/debates/{self.debate.pk}/me/stance"
         response = self.client.get(url)
