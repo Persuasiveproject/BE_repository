@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -31,6 +33,15 @@ ALLOWED_HOSTS = [
     for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
     if host.strip()
 ]
+
+# 웹 개발 origin은 각 배포 환경에서 명시한다. 기본값은 허용하지 않는다.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('DJANGO_CORS_ALLOWED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+CORS_URLS_REGEX = r'^/v1/'
+CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key')
 
 # ALB가 TLS를 종료하고 API 보안 그룹이 ALB만 허용하는 환경에서 활성화한다.
 if os.environ.get('DJANGO_BEHIND_HTTPS_PROXY', 'false').lower() == 'true':
@@ -52,6 +63,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     "rest_framework",
+    "corsheaders",
     "accounts.apps.AccountsConfig",
     "debates.apps.DebatesConfig",
     "discussions.apps.DiscussionsConfig",
@@ -61,6 +73,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
