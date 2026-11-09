@@ -1,4 +1,4 @@
-"""Install the reviewed worker and CLOSED-result timer on an existing API host.
+"""Install the worker, automatic closing and result timers on an existing API host.
 
 Run as root on the selected EC2, after its API/DB/Redis configuration is ready.
 Does not provision Redis, change credentials, migrate databases, or start beat.
@@ -60,6 +60,29 @@ Unit=ye-results-{environment}.service
 [Install]
 WantedBy=timers.target
 ''',
+        f'ye-closing-{environment}.service': f'''[Unit]
+Description=Yeongup {environment} overdue debate closing
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ye-runtime/runtime.py closing {environment}
+TimeoutStartSec=120
+Nice=10
+''',
+        f'ye-closing-{environment}.timer': f'''[Unit]
+Description=Yeongup {environment} debate closing every 10 seconds
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=10
+AccuracySec=1
+Unit=ye-closing-{environment}.service
+
+[Install]
+WantedBy=timers.target
+''',
     }
 
 
@@ -85,7 +108,10 @@ def main():
     spec = importlib.util.spec_from_file_location('ye_runtime', runtime_source)
     runtime = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime)
-    runtime.api_config(args.environment)  # Verify the running API repository and container.
+    name, _ = runtime.api_config(args.environment)
+    # Fail before changing host files if the closing command is not deployed.
+    subprocess.run(['docker', 'exec', name, 'python', 'manage.py', 'help', 'close_debates'],
+                   check=True, stdout=subprocess.DEVNULL)
     target = Path('/opt/ye-runtime')
     target.mkdir(mode=0o755, parents=True, exist_ok=True)
     for source, name, mode in ((runtime_source, 'runtime.py', 0o700),
@@ -102,7 +128,8 @@ def main():
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', f'ye-worker-{args.environment}.service'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', f'ye-results-{args.environment}.timer'], check=True)
-    print('Worker and CLOSED result recovery enabled; beat and automatic closing are not enabled')
+    subprocess.run(['systemctl', 'enable', '--now', f'ye-closing-{args.environment}.timer'], check=True)
+    print('Worker, automatic closing and result recovery enabled; Celery beat is not enabled')
 
 
 if __name__ == '__main__':

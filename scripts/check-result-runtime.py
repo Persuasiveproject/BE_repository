@@ -71,14 +71,37 @@ with tempfile.TemporaryDirectory() as folder:
     finally:
         runtime.subprocess.run = real_run
 
+calls = []
+try:
+    def closing_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0)
+    runtime.subprocess.run = closing_run
+    runtime.run_closing('test-api')
+    assert calls == [(['docker', 'exec', 'test-api', 'python', 'manage.py', 'close_debates'], {'check': True})]
+    def failed_closing(args, **kwargs):
+        raise subprocess.CalledProcessError(1, args)
+    runtime.subprocess.run = failed_closing
+    try:
+        runtime.run_closing('test-api')
+    except subprocess.CalledProcessError:
+        pass
+    else:
+        raise AssertionError('Closing command failure was silently ignored')
+finally:
+    runtime.subprocess.run = real_run
+
 for environment in ('development', 'production'):
     run = subprocess.run([sys.executable, 'scripts/install-result-runtime.py', environment, '--render-only'],
                          cwd=ROOT, check=True, text=True, capture_output=True)
     units = json.loads(run.stdout)
-    assert len(units) == 3
+    assert len(units) == 5
     assert 'OnUnitInactiveSec=10' in units[f'ye-results-{environment}.timer']
     assert f'runtime.py results {environment}' in units[f'ye-results-{environment}.service']
     assert f'runtime.py worker {environment}' in units[f'ye-worker-{environment}.service']
+    assert 'OnUnitInactiveSec=10' in units[f'ye-closing-{environment}.timer']
+    assert f'Unit=ye-closing-{environment}.service' in units[f'ye-closing-{environment}.timer']
+    assert f'runtime.py closing {environment}' in units[f'ye-closing-{environment}.service']
     assert all('celery beat' not in source for source in units.values())
 bad = subprocess.run([sys.executable, 'scripts/install-result-runtime.py', 'invalid', '--render-only'],
                      cwd=ROOT, text=True, capture_output=True)

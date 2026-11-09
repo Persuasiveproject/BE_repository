@@ -44,11 +44,20 @@ def run_results(name):
         raise RuntimeError('Could not inspect the API recovery command')
 
 
+def run_closing(name):
+    # Require the deployed image's reviewed command; do not inject closing code
+    # into an old image whose models or migrations may differ.
+    subprocess.run(['docker', 'exec', name, 'python', 'manage.py', 'close_debates'], check=True)
+
+
 def main():
     mode, environment = sys.argv[1:]
-    if environment not in ('development', 'production') or mode not in ('worker', 'results'):
+    if environment not in ('development', 'production') or mode not in ('worker', 'results', 'closing'):
         raise SystemExit('Unexpected runtime mode/environment')
     name, config = api_config(environment)
+    if mode == 'closing':
+        run_closing(name)
+        return
     worker_name = 'yeongeopjung-' + ('dev' if environment == 'development' else 'production') + '-worker'
     if mode == 'results':
         existing = subprocess.run(['docker', 'inspect', worker_name], text=True, capture_output=True)
