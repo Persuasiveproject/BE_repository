@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from debates.api_contract import MAX_ID
 from debates.models import Debate
+from debates.serializers import utc
 
 
 class DraftInput(serializers.Serializer):
@@ -31,10 +32,13 @@ class DraftInput(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        duration = attrs.get("durationMinutes")
-        if attrs["kind"] == Debate.Type.QUICK and duration is None:
+        # On PATCH, omitted kind/durationMinutes keep the draft's current values.
+        draft = self.instance
+        kind = attrs.get("kind", draft.type if draft else None)
+        duration = attrs.get("durationMinutes", draft.duration_minutes if draft else None)
+        if kind == Debate.Type.QUICK and duration is None:
             raise serializers.ValidationError({"durationMinutes": ["Required for QUICK debates."]})
-        if attrs["kind"] == Debate.Type.ENDLESS and duration is not None:
+        if kind == Debate.Type.ENDLESS and duration is not None:
             raise serializers.ValidationError({"durationMinutes": ["Must be null for ENDLESS debates."]})
         return attrs
 
@@ -43,3 +47,16 @@ class DraftInput(serializers.Serializer):
         if not value.strip():
             raise serializers.ValidationError("This field may not be blank.")
         return value
+
+
+def draft_data(debate):
+    return {
+        "debateId": str(debate.pk),
+        "kind": debate.type,
+        "title": debate.title,
+        "status": debate.status,
+        "createdAt": utc(debate.created_at),
+        "categoryId": str(debate.category_id),
+        "content": debate.content,
+        "durationMinutes": debate.duration_minutes,
+    }
