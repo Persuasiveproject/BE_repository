@@ -174,13 +174,25 @@ CELERY_ENABLE_UTC = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_RESULT_EXPIRES = 3600
-CELERY_IMPORTS = ('config.tasks', 'debates.tasks.closing', 'debates.tasks.results')
+CELERY_IMPORTS = (
+    'config.tasks', 'debates.tasks.closing', 'debates.tasks.results', 'discussions.ai.tasks',
+)
+
+# AI 요약 (FC-DB-220-002·003·006). 기본은 꺼짐: 키가 없는 환경에서 외부 호출을 하지 않는다.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+AI_SUMMARY_ENABLED = os.environ.get('AI_SUMMARY_ENABLED', 'false').lower() == 'true'
+AI_SUMMARY_MODEL = os.environ.get('AI_SUMMARY_MODEL', 'gemini-3.1-flash-lite-preview')
+AI_SUMMARY_THINKING = os.environ.get('AI_SUMMARY_THINKING', 'minimal')
+AI_SUMMARY_MONTHLY_BUDGET_USD = float(os.environ.get('AI_SUMMARY_MONTHLY_BUDGET_USD', '300'))
+AI_SUMMARY_PRICE_IN = float(os.environ.get('AI_SUMMARY_PRICE_IN', '0.25'))  # 달러/100만 토큰
+AI_SUMMARY_PRICE_OUT = float(os.environ.get('AI_SUMMARY_PRICE_OUT', '1.50'))
 
 # 개발환경 확인용이다. 실제 마감·보상·AI 작업은 각 도메인에서 구현한다.
 from debates.schedules.closing import BEAT_SCHEDULE as CLOSING_BEAT_SCHEDULE
 from debates.schedules.results import BEAT_SCHEDULE as RESULT_BEAT_SCHEDULE
+from discussions.ai.schedules import BEAT_SCHEDULE as AI_SUMMARY_BEAT_SCHEDULE
 
-CELERY_BEAT_SCHEDULE = {**CLOSING_BEAT_SCHEDULE, **RESULT_BEAT_SCHEDULE}
+CELERY_BEAT_SCHEDULE = {**CLOSING_BEAT_SCHEDULE, **RESULT_BEAT_SCHEDULE, **AI_SUMMARY_BEAT_SCHEDULE}
 if os.environ.get('CELERY_HEARTBEAT_ENABLED', 'false').lower() == 'true':
     CELERY_BEAT_SCHEDULE['local-heartbeat'] = {
         'task': 'config.tasks.ping',
