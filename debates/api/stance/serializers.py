@@ -1,0 +1,32 @@
+from rest_framework import serializers
+
+from debates.api_contract import MAX_ID
+from debates.models import Stance
+from debates.serializers import utc
+
+
+class StanceChangeInput(serializers.Serializer):
+    stance = serializers.ChoiceField(choices=Stance.choices)
+    opinionId = serializers.RegexField(r"\A[1-9][0-9]{0,18}\Z", required=False, trim_whitespace=False)
+    version = serializers.IntegerField(min_value=0, max_value=2**31 - 1, required=False)
+
+    def validate_version(self, value):
+        if type(self.initial_data["version"]) is not int:
+            raise serializers.ValidationError("Use an integer.")
+        return value
+
+    def validate_opinionId(self, value):
+        if not isinstance(self.initial_data["opinionId"], str) or int(value) > MAX_ID:
+            raise serializers.ValidationError("Use a positive 64-bit ID as a decimal string.")
+        return int(value)
+
+
+class StanceEventSerializer(serializers.BaseSerializer):
+    def to_representation(self, event):
+        return {
+            "id": str(event.pk),
+            "fromStance": event.from_stance,
+            "toStance": event.to_stance,
+            "changedAt": utc(event.changed_at),
+            "persuasionId": str(event.persuasion_id) if event.persuasion_id is not None else None,
+        }
