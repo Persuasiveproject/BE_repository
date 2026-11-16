@@ -11,7 +11,7 @@ from debates.models import Category
 from debates.serializers import utc
 from economy.models import UserBadge
 
-from .models import UserIdentityVerification, UserInterestCategory
+from .models import User, UserIdentityVerification, UserInterestCategory
 
 
 ID_PATTERN = re.compile(r"\A[1-9][0-9]{0,18}\Z")
@@ -98,17 +98,19 @@ class MeInterestsView(ContractResponseMixin, APIView):
                 "You can select up to 5 interest categories.",
             )
 
-        found_ids = set(
-            Category.objects.filter(pk__in=unique_ids, is_active=True).values_list("pk", flat=True)
-        )
-        if len(found_ids) != len(unique_ids):
-            raise ContractError(404, "CATEGORY_NOT_FOUND", "The category was not found.")
-
         with transaction.atomic():
+            User.objects.select_for_update().get(pk=request.user.pk)
+            found_ids = set(
+                Category.objects.filter(pk__in=unique_ids, is_active=True).values_list("pk", flat=True)
+            )
+            if len(found_ids) != len(unique_ids):
+                raise ContractError(404, "CATEGORY_NOT_FOUND", "The category was not found.")
+
             UserInterestCategory.objects.filter(user=request.user).delete()
             UserInterestCategory.objects.bulk_create([
                 UserInterestCategory(user=request.user, category_id=cid)
                 for cid in unique_ids
             ])
+            interests = serialize_interests(request.user)
 
-        return Response({"data": {"interests": serialize_interests(request.user)}})
+        return Response({"data": {"interests": interests}})
