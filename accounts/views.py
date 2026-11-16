@@ -1,12 +1,31 @@
+from collections.abc import Mapping
+import re
+
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from debates.api_contract import ContractResponseMixin
+from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
+from debates.models import Category
 from debates.serializers import utc
 from economy.models import UserBadge
 
 from .models import UserIdentityVerification, UserInterestCategory
+
+
+ID_PATTERN = re.compile(r"\A[1-9][0-9]{0,18}\Z")
+
+
+def serialize_interests(user):
+    interests = (
+        UserInterestCategory.objects.filter(user=user, category__is_active=True)
+        .select_related("category").order_by("category__sort_order", "category_id")
+    )
+    return [
+        {"id": str(i.category_id), "name": i.category.name, "sortOrder": i.category.sort_order}
+        for i in interests
+    ]
 
 
 class MeView(ContractResponseMixin, APIView):
@@ -22,10 +41,6 @@ class MeView(ContractResponseMixin, APIView):
 
     def get(self, request):
         user = request.user
-        interests = (
-            UserInterestCategory.objects.filter(user=user, category__is_active=True)
-            .select_related("category").order_by("category__sort_order", "category_id")
-        )
         badges = UserBadge.objects.filter(user=user).select_related("badge").order_by("acquired_at", "badge_id")
         return Response({"data": {
             "id": str(user.pk),
@@ -34,10 +49,7 @@ class MeView(ContractResponseMixin, APIView):
                 user=user, status=UserIdentityVerification.Status.VERIFIED,
             ).exists(),
             "nickname": user.nickname,
-            "interests": [
-                {"id": str(i.category_id), "name": i.category.name, "sortOrder": i.category.sort_order}
-                for i in interests
-            ],
+            "interests": serialize_interests(user),
             "credit": format(user.credit, ".6f"),
             "badges": [
                 {
@@ -50,3 +62,53 @@ class MeView(ContractResponseMixin, APIView):
                 for b in badges
             ],
         }})
+
+
+class MeInterestsView(ContractResponseMixin, APIView):
+    permission_classes = [IsActiveMember]
+
+    def put(self, request):
+        if (
+            not isinstance(request.data, Mapping)
+            or set(request.data.keys()) != {"categoryIds"}
+            or not isinstance(request.data.get("categoryIds"), list)
+        ):
+            raise ContractError(
+                400,
+                "VALIDATION_ERROR",
+                "Check the request fields.",
+                details={"categoryIds": ["Provide a list of category IDs."]},
+            )
+
+        category_ids = request.data["categoryIds"]
+        for item in category_ids:
+            if not isinstance(item, str) or not ID_PATTERN.fullmatch(item) or int(item) > MAX_ID:
+                raise ContractError(
+                    400,
+                    "VALIDATION_ERROR",
+                    "Check the request fields.",
+                    details={"categoryIds": ["Use positive 64-bit ID strings."]},
+                )
+
+        unique_ids = list(dict.fromkeys(int(item) for item in category_ids))
+        if len(category_ids) > 5 or len(unique_ids) > 5:
+            raise ContractError(
+                400,
+                "INTEREST_LIMIT_EXCEEDED",
+                "You can select up to 5 interest categories.",
+            )
+
+        found_ids = set(
+            Category.objects.filter(pk__in=unique_ids, is_active=True).values_list("pk", flat=True)
+        )
+        if len(found_ids) != len(unique_ids):
+            raise ContractError(404, "CATEGORY_NOT_FOUND", "The category was not found.")
+
+        with transaction.atomic():
+            UserInterestCategory.objects.filter(user=request.user).delete()
+            UserInterestCategory.objects.bulk_create([
+                UserInterestCategory(user=request.user, category_id=cid)
+                for cid in unique_ids
+            ])
+
+        return Response({"data": {"interests": serialize_interests(request.user)}})
