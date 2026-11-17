@@ -1,5 +1,6 @@
 import re
 
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
@@ -80,7 +81,9 @@ class DebateListView(ContractResponseMixin, ListAPIView):
         if len(query) > 100:
             raise filter_invalid("Use a query of up to 100 characters.")
         if query:
-            debates = debates.filter(title__icontains=query)
+            debates = debates.filter(
+                Q(title__icontains=query) | Q(content__icontains=query),
+            )
         return debates
 
     def get_serializer_context(self):
