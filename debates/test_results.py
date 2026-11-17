@@ -116,9 +116,10 @@ class DebateFlowTests(ResultFixture, TestCase):
         url = reverse("debate-result", args=[self.debate.id])
 
         def fail_after_insert(debate):
-            save_debate_statistics(debate)
+            result = save_debate_statistics(debate)
             if debate.id == self.debate.id:
                 raise RuntimeError("Simulated result failure")
+            return result
 
         with patch("debates.results.save_debate_statistics", side_effect=fail_after_insert) as save:
             with self.assertLogs("debates.results", level="ERROR"):

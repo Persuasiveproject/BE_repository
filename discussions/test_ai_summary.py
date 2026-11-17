@@ -13,13 +13,13 @@ from .ai import state
 from .ai.prompt import build_user_text
 from .ai.selection import fingerprint, input_ids, select_inputs
 from .ai.service import generate_summary
-from .ai.tasks import refresh_ai_summaries
+from .ai.tasks import refresh_ai_summaries, refresh_summary_on_commit
 from .ai.validate import SummaryRejected, clean
 
 
 def _clear(debate_id):
     r = state._redis()
-    for kind in ("lock", "fp", "fail", "final"):
+    for kind in ("lock", "fp", "fail"):
         r.delete(f"{state.PREFIX}:{kind}:{debate_id}")
 
 
@@ -70,7 +70,8 @@ class SelectionTests(SummaryFixture, TestCase):
         hidden.status = Opinion.Status.DELETED
         hidden.save(update_fields=["status"])
         groups = select_inputs(self.debate.pk)
-        self.assertEqual(list(groups), [Stance.PRO, Stance.CON])  # 유보는 [확인-6] 확정 전 제외
+        self.assertEqual(list(groups), [Stance.PRO, Stance.CON, Stance.NEUTRAL])
+        self.assertEqual([i["id"] for i in groups[Stance.NEUTRAL]], [str(self.neu.pk)])
         self.assertEqual([i["id"] for i in groups[Stance.PRO]], [str(self.pro1.pk), str(self.pro2.pk)])
         self.assertEqual(groups[Stance.PRO][1]["replies"][0]["id"], str(self.reply.pk))
         self.assertNotIn(str(hidden.pk), input_ids(groups))
@@ -176,6 +177,30 @@ class GenerateTests(SummaryFixture, TestCase):
         self.assertFalse(AISummary.objects.filter(stance=Stance.CON).exists())
         self.assertTrue(AISummary.objects.filter(stance=Stance.PRO).exists())
 
+    def test_neutral_summary_uses_only_neutral_sources_and_keeps_pro_con_response(self):
+        self.seed()
+        raw = json.loads(self.llm_output())
+        raw["neutral"] = [
+            {"text": "금액을 보고 판단하겠다는 의견이 있다.", "sourceIds": [str(self.neu.pk)]},
+            {"text": "다른 입장의 근거를 쓴 의견이 있다.", "sourceIds": [str(self.pro1.pk)]},
+        ]
+        self.assertEqual(self.run_gen(json.dumps(raw))[0], "created")
+        data = self.client.get(f"/v1/debates/{self.debate.pk}/summary").json()["data"]
+        self.assertEqual([item["stance"] for item in data["summaries"]], ["PRO", "CON"])
+        self.assertEqual(data["neutralSummary"]["sourcePostIds"], [str(self.neu.pk)])
+        self.assertEqual(data["neutralSummary"]["summaryText"], "- 금액을 보고 판단하겠다는 의견이 있다.")
+
+    def test_source_hidden_during_generation_is_never_saved(self):
+        self.seed()
+
+        def hide_source(_prompt):
+            Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.FILTERED)
+            return self.llm_output(), {}
+
+        with patch("discussions.ai.client.generate", side_effect=hide_source):
+            self.assertEqual(generate_summary(self.debate.pk), "invalidated")
+        self.assertFalse(AISummary.objects.exists())
+
     def test_llm_failure_backs_off_and_keeps_previous(self):
         self.seed()
         self.run_gen()
@@ -221,9 +246,51 @@ class TaskTests(SummaryFixture, TestCase):
             self.assertEqual(refresh_ai_summaries(), 0)
             self.assertEqual(gen.call_count, 3)
 
+    def test_final_summary_recovers_after_outage_and_survives_redis_loss(self):
+        self.seed()
+        self.debate.status = Debate.Status.CLOSED
+        self.debate.closed_at = timezone.now() - timedelta(days=2)
+        self.debate.save(update_fields=["status", "closed_at"])
+        with patch("discussions.ai.client.generate", return_value=(self.llm_output(), {})) as gen:
+            self.assertEqual(refresh_ai_summaries(), 1)
+            self.debate.refresh_from_db()
+            self.assertIsNotNone(self.debate.ai_summary_finalized_at)
+            _clear(self.debate.pk)
+            self.assertEqual(refresh_ai_summaries(), 0)
+            gen.assert_called_once()
+
+    def test_hidden_source_queues_refresh_after_commit_and_reopens_final_summary(self):
+        self.seed()
+        now = timezone.now()
+        Debate.objects.filter(pk=self.debate.pk).update(
+            status=Debate.Status.CLOSED, closed_at=now, ai_summary_finalized_at=now,
+        )
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        with patch("discussions.ai.tasks.refresh_debate_summary.delay") as enqueue:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.pro1.status = Opinion.Status.FILTERED
+                self.pro1.save(update_fields=["status"])
+                enqueue.assert_not_called()
+            enqueue.assert_called_once_with(self.debate.pk)
+        self.debate.refresh_from_db()
+        self.assertIsNone(self.debate.ai_summary_finalized_at)
+
+    def test_bulk_visibility_hook_also_enqueues_after_commit(self):
+        self.seed()
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        with patch("discussions.ai.tasks.refresh_debate_summary.delay") as enqueue:
+            with self.captureOnCommitCallbacks(execute=True):
+                Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.DELETED)
+                refresh_summary_on_commit(self.debate.pk)
+            enqueue.assert_called_once_with(self.debate.pk)
+
 
 class SummaryApiTests(SummaryFixture, TestCase):
-    def test_returns_latest_per_stance_with_visible_sources_only(self):
+    def test_hides_entire_summary_if_its_source_is_deleted(self):
         self.seed()
         AISummary.objects.create(debate=self.debate, stance=Stance.PRO, summary_text="old",
                                  source_opinion_ids=[self.pro1.pk], model="m")
@@ -233,15 +300,32 @@ class SummaryApiTests(SummaryFixture, TestCase):
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
         self.assertEqual(res.status_code, 200)
         items = res.json()["data"]["summaries"]
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["stance"], "PRO")
-        self.assertEqual(items[0]["summaryText"], "- new")
-        self.assertEqual(items[0]["sourcePostIds"], [str(self.pro1.pk)])
-        self.assertTrue(items[0]["createdAt"].endswith("Z"))
+        self.assertEqual(items, [])
+
+    def test_status_distinguishes_generation_updates_and_failure_and_keeps_valid_old_summary(self):
+        self.seed()
+        url = f"/v1/debates/{self.debate.pk}/summary"
+        self.assertEqual(self.client.get(url).json()["data"]["status"], "PENDING")
+        token = state.acquire_lock(self.debate.pk)
+        self.assertEqual(self.client.get(url).json()["data"]["status"], "GENERATING")
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "UPDATING")
+        self.assertEqual(data["summaries"][0]["summaryText"], "old")
+        self.assertTrue(data["summaries"][0]["createdAt"].endswith("Z"))
+        state.release_lock(self.debate.pk, token)
+        state.set_backoff(self.debate.pk)
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "FAILED")
+        self.assertEqual(data["summaries"][0]["summaryText"], "old")
+        state.clear_backoff(self.debate.pk)
+        self.assertEqual(self.client.get(url).json()["data"]["status"], "READY")
 
     def test_empty_and_not_found(self):
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
-        self.assertEqual(res.json(), {"data": {"summaries": []}})
+        self.assertEqual(res.json(), {"data": {"summaries": [], "neutralSummary": None, "status": "INSUFFICIENT"}})
         self.debate.status = Debate.Status.DRAFT
         self.debate.save(update_fields=["status"])
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")

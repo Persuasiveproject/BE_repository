@@ -3,6 +3,7 @@ import logging
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from debates.models import Debate, Stance
 from discussions.models import AISummary
@@ -28,6 +29,16 @@ def drop_stale_summaries(debate_id):
     return bool(stale)
 
 
+def summary_status(debate_id, has_summary):
+    if state.is_generating(debate_id):
+        return "UPDATING" if has_summary else "GENERATING"
+    if state.in_backoff(debate_id):
+        return "FAILED"
+    if public_post_count(debate_id) < MIN_PUBLIC_POSTS:
+        return "INSUFFICIENT"
+    return "READY" if has_summary else "PENDING"
+
+
 def estimate_cost(usage):
     tokens_in = usage.get("promptTokenCount") or 0
     tokens_out = (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0)
@@ -35,9 +46,20 @@ def estimate_cost(usage):
 
 
 @transaction.atomic
-def save_summaries(debate, items_by_stance):
+def save_summaries(debate, items_by_stance, *, finalize=False):
+    debate = Debate.objects.select_for_update().filter(pk=debate.pk).first()
+    allowed = (Debate.Status.CLOSED,) if finalize else (Debate.Status.OPEN, Debate.Status.CLOSED)
+    if debate is None or debate.status not in allowed or (finalize and debate.ai_summary_finalized_at is not None):
+        return "skipped"
+
+    source_ids = {int(i) for items in items_by_stance.values() for item in items for i in item["sourceIds"]}
+    sources = visible_posts(debate.pk).filter(pk__in=source_ids).select_for_update().order_by("pk")
+    visible = set(sources.values_list("pk", flat=True))
+    if source_ids != visible:
+        return "invalidated"
+
     created = 0
-    for stance in (Stance.PRO, Stance.CON):
+    for stance in Stance.values:
         items = items_by_stance.get(stance) or []
         if not items:
             continue  # 새 항목이 없으면 이전 요약을 그대로 둔다
@@ -47,14 +69,17 @@ def save_summaries(debate, items_by_stance):
             source_opinion_ids=ids, model=settings.AI_SUMMARY_MODEL[:50],
         )
         created += 1
-    return created
+    if finalize:
+        debate.ai_summary_finalized_at = timezone.now()
+        debate.save(update_fields=["ai_summary_finalized_at"])
+    return "created" if created else "empty"
 
 
-def generate_summary(debate_id, *, force=False):
+def generate_summary(debate_id, *, force=False, finalize=False):
     """한 토론의 요약을 필요하면 만든다. 반환값은 결과 상태 문자열(로그·테스트용)."""
     debate = Debate.objects.filter(
         pk=debate_id, status__in=[Debate.Status.OPEN, Debate.Status.CLOSED],
-    ).only("id", "title", "status").first()
+    ).only("id", "title", "status", "ai_summary_finalized_at").first()
     if debate is None:
         return "skipped"
     token = state.acquire_lock(debate_id)
@@ -62,29 +87,39 @@ def generate_summary(debate_id, *, force=False):
         return "locked"
     try:
         stale = drop_stale_summaries(debate_id)
+        if finalize and not stale and Debate.objects.filter(
+            pk=debate_id, ai_summary_finalized_at__isnull=False,
+        ).exists():
+            return "skipped"
         if state.in_backoff(debate_id) and not stale:
             return "backoff"
         if public_post_count(debate_id) < MIN_PUBLIC_POSTS:
+            if finalize:
+                save_summaries(debate, {}, finalize=True)
             return "insufficient"  # 화면은 '의견이 더 모이면 요약해 드려요'
         groups = select_inputs(debate_id)
         fp = fingerprint(groups)
-        if (not force and not stale and state.get_fingerprint(debate_id) == fp
+        if (not force and not finalize and not stale and state.get_fingerprint(debate_id) == fp
                 and AISummary.objects.filter(debate_id=debate_id).exists()):
             return "unchanged"
         if state.month_cost() >= settings.AI_SUMMARY_MONTHLY_BUDGET_USD:
             logger.warning("Monthly AI summary budget reached; skipping debate %s", debate_id)
+            state.set_backoff(debate_id)
             return "budget"
 
         raw, usage = client.generate(build_user_text(debate.title, groups))
         state.add_cost(estimate_cost(usage))
-        items = clean(raw, input_ids(groups))
-        created = save_summaries(debate, items)
-        state.set_fingerprint(debate_id, fp)
+        neutral_ids = input_ids({Stance.NEUTRAL: groups[Stance.NEUTRAL]})
+        items = clean(raw, input_ids(groups), neutral_ids=neutral_ids)
+        outcome = save_summaries(debate, items, finalize=finalize)
+        if outcome in ("created", "empty"):
+            state.set_fingerprint(debate_id, fp)
+            state.clear_backoff(debate_id)
         logger.info(
-            "AI summary debate=%s created=%d model=%s usage=%s",
-            debate_id, created, settings.AI_SUMMARY_MODEL, usage,
+            "AI summary debate=%s outcome=%s model=%s usage=%s",
+            debate_id, outcome, settings.AI_SUMMARY_MODEL, usage,
         )
-        return "created" if created else "empty"
+        return outcome
     except (client.SummaryLLMError, SummaryRejected) as e:
         state.set_backoff(debate_id)
         logger.warning("AI summary failed for debate %s: %s", debate_id, e)
