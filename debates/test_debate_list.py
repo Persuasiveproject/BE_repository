@@ -138,3 +138,66 @@ class DebateListTests(TestCase):
         self.assertEqual(len(self.ids()), 1)
         self.client.force_authenticate(self.user)
         self.assertEqual(len(self.ids()), 1)
+
+    def test_query_matches_content_case_insensitively(self):
+        match = self.debate(title="Other Topic", content="Universal Basic Welfare detail")
+        self.debate(title="Another Topic", content="Unrelated content")
+
+        self.assertEqual(self.ids(query="  welfare "), [str(match.pk)])
+
+    def test_query_matches_title_or_content_and_excludes_non_visible(self):
+        title_only = self.debate(title="Climate Policy", content="General discussion")
+        content_only = self.debate(title="General Topic", content="New climate action plan")
+        both = self.debate(title="Climate Summit", content="Global climate initiative")
+        self.debate(title="Economy", content="Fiscal policy")
+        self.debate(status="DRAFT", title="Draft", content="climate draft")
+        self.debate(status="CANCELED", canceled_at=self.now, title="Canceled", content="climate canceled")
+
+        self.assertEqual(
+            self.ids(query="climate"),
+            [str(both.pk), str(content_only.pk), str(title_only.pk)],
+        )
+
+    def test_query_combines_with_filters_and_cursor_pagination(self):
+        matches = [
+            self.debate(
+                type="ENDLESS",
+                duration_minutes=None,
+                category=self.other_category,
+                title=f"Topic {i}",
+                content="Renewable energy grid",
+            )
+            for i in range(21)
+        ]
+        # Non-matching filter combinations that still match the content keyword
+        self.debate(type="QUICK", category=self.other_category, title="Quick", content="Renewable energy")
+        self.debate(type="ENDLESS", duration_minutes=None, category=self.category, title="Cat1", content="Renewable energy")
+        self.debate(
+            type="ENDLESS",
+            duration_minutes=None,
+            category=self.other_category,
+            status="CLOSED",
+            closed_at=self.now,
+            title="Closed",
+            content="Renewable energy",
+        )
+        # Non-matching keyword with matching filters
+        self.debate(type="ENDLESS", duration_minutes=None, category=self.other_category, title="Other", content="Unrelated")
+
+        params = {
+            "query": "renewable",
+            "status": "OPEN",
+            "categoryId": str(self.other_category.pk),
+            "kind": "ENDLESS",
+        }
+        first = self.client.get(self.url, params).json()
+        self.assertEqual(len(first["data"]["debates"]), 20)
+        self.assertIsNotNone(first["meta"]["nextCursor"])
+        self.assertEqual(
+            [item["id"] for item in first["data"]["debates"]],
+            [str(d.pk) for d in reversed(matches[1:])],
+        )
+
+        second = self.client.get(self.url, {**params, "cursor": first["meta"]["nextCursor"]}).json()
+        self.assertEqual([item["id"] for item in second["data"]["debates"]], [str(matches[0].pk)])
+        self.assertIsNone(second["meta"]["nextCursor"])
