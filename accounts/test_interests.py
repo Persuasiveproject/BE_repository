@@ -70,6 +70,31 @@ class MeInterestsTests(MeInterestsFixture, TestCase):
             [self.categories[0].pk],
         )
 
+    def test_put_accepts_more_than_five_entries_with_at_most_five_unique_ids(self):
+        for selected in (self.categories[:1], self.categories[:5]):
+            with self.subTest(unique_count=len(selected)):
+                ids = [str(c.pk) for c in selected]
+                response = self.put({"categoryIds": ids * 6})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json(),
+                    {"data": {"interests": self.expected_interests(selected)}},
+                )
+                self.assertEqual(
+                    set(UserInterestCategory.objects.filter(user=self.user).values_list("category_id", flat=True)),
+                    {c.pk for c in selected},
+                )
+
+    def test_put_rejects_more_than_five_unique_ids_even_with_duplicates(self):
+        UserInterestCategory.objects.create(user=self.user, category=self.categories[0])
+        response = self.put({"categoryIds": [str(c.pk) for c in self.categories] * 2})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INTEREST_LIMIT_EXCEEDED")
+        self.assertEqual(
+            list(UserInterestCategory.objects.filter(user=self.user).values_list("category_id", flat=True)),
+            [self.categories[0].pk],
+        )
+
     def test_exceeding_limit_returns_400_without_modifying_db(self):
         UserInterestCategory.objects.create(user=self.user, category=self.categories[0])
 
@@ -107,6 +132,7 @@ class MeInterestsTests(MeInterestsFixture, TestCase):
             {"categoryIds": ["abc"]},
             {"categoryIds": [str(2**63)]},
             {"categoryIds": [None]},
+            {"categoryIds": [str(self.categories[0].pk)] * 6 + [None]},
             [],
         ):
             with self.subTest(payload=payload):

@@ -91,7 +91,7 @@ class MeInterestsView(ContractResponseMixin, APIView):
                 )
 
         unique_ids = list(dict.fromkeys(int(item) for item in category_ids))
-        if len(category_ids) > 5 or len(unique_ids) > 5:
+        if len(unique_ids) > 5:
             raise ContractError(
                 400,
                 "INTEREST_LIMIT_EXCEEDED",
