@@ -114,3 +114,132 @@ class NotificationListTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+
+class NotificationReadTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user("member@example.com", "Member")
+        self.other = User.objects.create_user("other@example.com", "Other")
+        self.client.force_authenticate(self.user)
+
+    def notify(self, user=None, is_read=False):
+        return Notification.objects.create(
+            user=user or self.user,
+            type="REPLY",
+            title="New reply",
+            is_read=is_read,
+        )
+
+    def test_patch_marks_notification_read_and_is_idempotent(self):
+        unread = self.notify()
+        self.notify()
+
+        url = reverse("notification-read", args=[unread.pk])
+        first = self.client.patch(url, {"isRead": True}, format="json")
+        self.assertEqual(first.status_code, 200)
+        body = first.json()
+        self.assertEqual(body, {"data": {"notificationId": str(unread.pk), "isRead": True}})
+        self.assertIs(body["data"]["isRead"], True)
+
+        unread.refresh_from_db()
+        self.assertIs(unread.is_read, True)
+
+        listing = self.client.get(reverse("notification-list")).json()
+        self.assertEqual(listing["data"]["unreadCount"], 1)
+
+        second = self.client.patch(url, {"isRead": True}, format="json")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json(), {"data": {"notificationId": str(unread.pk), "isRead": True}})
+
+    def test_patch_rejects_invalid_body_without_updating(self):
+        unread = self.notify()
+        url = reverse("notification-read", args=[unread.pk])
+
+        for payload in (
+            {"isRead": False},
+            {"isRead": "true"},
+            {"isRead": 1},
+            {"isRead": None},
+            {},
+            {"isRead": True, "extra": 1},
+            [],
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.patch(url, payload, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+                unread.refresh_from_db()
+                self.assertIs(unread.is_read, False)
+
+    def test_patch_rejects_invalid_path_id(self):
+        for bad_id in (0, 2**63):
+            with self.subTest(bad_id=bad_id):
+                response = self.client.patch(f"/v1/me/notifications/{bad_id}", {"isRead": True}, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+
+    def test_patch_not_found(self):
+        response = self.client.patch(reverse("notification-read", args=[999999]), {"isRead": True}, format="json")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+    def test_patch_other_users_notification_forbidden(self):
+        others = self.notify(user=self.other)
+        response = self.client.patch(reverse("notification-read", args=[others.pk]), {"isRead": True}, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "NOT_NOTIFICATION_OWNER")
+        others.refresh_from_db()
+        self.assertIs(others.is_read, False)
+
+    def test_patch_requires_active_member(self):
+        unread = self.notify()
+        url = reverse("notification-read", args=[unread.pk])
+
+        self.client.force_authenticate(None)
+        anon = self.client.patch(url, {"isRead": True}, format="json")
+        self.assertEqual(anon.status_code, 401)
+        self.assertEqual(anon.json()["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+        self.user.status = User.Status.SUSPENDED
+        self.user.save(update_fields=["status"])
+        self.client.force_authenticate(self.user)
+        suspended = self.client.patch(url, {"isRead": True}, format="json")
+        self.assertEqual(suspended.status_code, 403)
+        self.assertEqual(suspended.json()["error"]["code"], "FORBIDDEN")
+
+    def test_read_all_marks_only_own_unread_notifications(self):
+        self.notify(is_read=False)
+        self.notify(is_read=False)
+        self.notify(is_read=True)
+        other_unread = self.notify(user=self.other, is_read=False)
+
+        url = reverse("notification-read-all")
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body, {"data": {"updatedCount": 2}})
+        self.assertIs(type(body["data"]["updatedCount"]), int)
+
+        self.assertEqual(Notification.objects.filter(user=self.user, is_read=False).count(), 0)
+        other_unread.refresh_from_db()
+        self.assertIs(other_unread.is_read, False)
+
+        repeat = self.client.post(url)
+        self.assertEqual(repeat.status_code, 200)
+        self.assertEqual(repeat.json(), {"data": {"updatedCount": 0}})
+
+    def test_read_all_requires_active_member(self):
+        url = reverse("notification-read-all")
+
+        self.client.force_authenticate(None)
+        anon = self.client.post(url)
+        self.assertEqual(anon.status_code, 401)
+        self.assertEqual(anon.json()["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+        self.user.status = User.Status.SUSPENDED
+        self.user.save(update_fields=["status"])
+        self.client.force_authenticate(self.user)
+        suspended = self.client.post(url)
+        self.assertEqual(suspended.status_code, 403)
+        self.assertEqual(suspended.json()["error"]["code"], "FORBIDDEN")
