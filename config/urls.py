@@ -22,6 +22,7 @@ urlpatterns = [
     path('v1/', include('debates.urls')),
     path('v1/', include('engagement.urls')),
     path('v1/', include('accounts.urls')),
+    path('v1/', include('economy.urls')),
     path('health/', health, name='health'),
     path('admin/', admin.site.urls),
 ]
