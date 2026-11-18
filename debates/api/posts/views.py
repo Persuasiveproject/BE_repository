@@ -9,14 +9,20 @@ from debates.api.writes import IdempotentWrite, lock_debate_for_write
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant, Stance
 from debates.stance_checks import require_before_deadline, require_open_debate
-from discussions.models import Opinion, OpinionReference
+from discussions.models import Opinion, OpinionReference, OpinionVote
 from economy.models import UserBadge
+from moderation.checks import require_no_banned_words
 
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
+from .spam import require_not_spamming
 
 
 PUBLIC_DEBATE_STATES = (Debate.Status.OPEN, Debate.Status.CLOSED)
+VOTE_COUNT_FIELDS = {
+    OpinionVote.VoteType.UP: "upvote_count",
+    OpinionVote.VoteType.DOWN: "downvote_count",
+}
 POST_SORT_FIELDS = {
     "latest": None,
     "upvotes": "upvote_count",
@@ -90,17 +96,19 @@ class DebatePostListView(ContractResponseMixin, APIView):
         payload = PostInput(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
-        for item in data["references"]:
-            check_reference_url(item["url"])
         write = IdempotentWrite(request, data)
         debate = lock_debate_for_write(debate_id, request.user.pk)
         if (saved := write.replay()) is not None:
             return Response(saved[0], status=saved[1])
-
+          
+        for item in data["references"]:
+            check_reference_url(item["url"])
+        require_no_banned_words(data["content"])
         participant = DebateParticipant.objects.select_for_update().filter(debate=debate, user=request.user).first()
         if participant is None:
             raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before posting.")
         require_open_debate(debate)
+        require_not_spamming(request.user, debate, data["content"])
         parent, root_id = None, None
         if "parentId" in data:
             parent, root_id = reply_target(debate, data["parentId"])
@@ -138,3 +146,64 @@ class PostThreadView(ContractResponseMixin, APIView):
             parent=parent, debate_id=parent.debate_id, debate__status__in=PUBLIC_DEBATE_STATES,
         )
         return post_page(request, opinion_cards(replies), "replies")
+
+
+@transaction.atomic
+def set_reaction(user, post_id, reaction):
+    """Set the user's vote on a post; reaction=None removes it."""
+    if not 1 <= post_id <= MAX_ID:
+        raise ContractError(400, "VALIDATION_ERROR", "Use a valid post ID.")
+    not_found = ContractError(404, "POST_NOT_FOUND", "Post not found.")
+    debate_id = visible_opinions().filter(
+        pk=post_id, debate__status__in=PUBLIC_DEBATE_STATES,
+    ).values_list("debate_id", flat=True).first()
+    if debate_id is None:
+        raise not_found
+    debate = lock_debate_for_write(debate_id, user.pk)
+    participant = DebateParticipant.objects.select_for_update().filter(debate=debate, user=user).first()
+    if participant is None:
+        raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before reacting.")
+    # Recheck after locking: the post or debate may have changed while waiting.
+    post = visible_opinions().select_for_update(of=("self",)).filter(pk=post_id, debate=debate).first()
+    if post is None or debate.status not in PUBLIC_DEBATE_STATES:
+        raise not_found
+    require_open_debate(debate)
+    if reaction is not None and post.participant_id == participant.pk:
+        raise ContractError(403, "OWN_POST_REACTION", "You cannot react to your own post.")
+
+    votes = OpinionVote.objects.filter(user=user, opinion=post)
+    previous = votes.values_list("vote_type", flat=True).first()
+    if previous != reaction:
+        if previous is not None:
+            field = VOTE_COUNT_FIELDS[previous]
+            Opinion.objects.filter(pk=post.pk, **{f"{field}__gt": 0}).update(**{field: F(field) - 1})
+        if reaction is None:
+            votes.delete()
+        else:
+            field = VOTE_COUNT_FIELDS[reaction]
+            Opinion.objects.filter(pk=post.pk).update(**{field: F(field) + 1})
+            if previous is None:
+                OpinionVote.objects.create(user=user, opinion=post, vote_type=reaction)
+            else:
+                votes.update(vote_type=reaction)
+    post.refresh_from_db(fields=["upvote_count", "downvote_count"])
+    return post
+
+
+class PostReactionView(ContractResponseMixin, APIView):
+    permission_classes = [IsActiveMember]
+
+    def put(self, request, post_id):
+        reaction = request.data.get("reaction") if isinstance(request.data, dict) else None
+        if not isinstance(reaction, str) or reaction not in VOTE_COUNT_FIELDS:
+            raise ContractError(400, "VALIDATION_ERROR", "Use UP or DOWN.")
+        post = set_reaction(request.user, post_id, reaction)
+        return Response({"data": {
+            "reaction": reaction,
+            "upvoteCount": post.upvote_count,
+            "downvoteCount": post.downvote_count,
+        }})
+
+    def delete(self, request, post_id):
+        set_reaction(request.user, post_id, None)
+        return Response(status=204)
