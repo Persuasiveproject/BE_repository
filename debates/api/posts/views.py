@@ -10,6 +10,7 @@ from debates.models import Debate, DebateParticipant, Stance
 from debates.stance_checks import require_before_deadline, require_open_debate
 from discussions.models import Opinion, OpinionReference, OpinionVote
 from economy.models import UserBadge
+from moderation.checks import require_no_banned_words
 
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
@@ -94,6 +95,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
         payload = PostInput(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
+        require_no_banned_words(data["content"])
         write = IdempotentWrite(request, data)
         debate = lock_debate_for_write(debate_id, request.user.pk)
         if (saved := write.replay()) is not None:
