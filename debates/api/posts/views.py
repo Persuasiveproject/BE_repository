@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from debates.api.references.validation import check_reference_url
 from debates.api.writes import IdempotentWrite, lock_debate_for_write
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant, Stance
@@ -11,6 +12,7 @@ from debates.stance_checks import require_before_deadline, require_open_debate
 from discussions.models import Opinion, OpinionReference, OpinionVote
 from economy.models import UserBadge
 from engagement.notifications import notify_reply
+from moderation.checks import require_no_banned_words
 
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
@@ -27,6 +29,7 @@ POST_SORT_FIELDS = {
     "upvotes": "upvote_count",
     "persuasion": "persuasion_count",
 }
+PERSUASION_SORT_MIN_POSTS = 20
 
 
 def visible_opinions():
@@ -82,12 +85,16 @@ class DebatePostListView(ContractResponseMixin, APIView):
         posts = visible_opinions().filter(
             debate_id=debate_id, debate__status__in=PUBLIC_DEBATE_STATES, parent__isnull=True,
         )
+        score_field = POST_SORT_FIELDS[sort]
+        # Few posts: persuasion falls back to upvotes. They fit on one page, so no cursor crosses the switch.
+        if sort == "persuasion" and posts.count() < PERSUASION_SORT_MIN_POSTS:
+            score_field = POST_SORT_FIELDS["upvotes"]
         if stance is not None:
             if stance not in Stance.values:
                 raise ContractError(400, "VALIDATION_ERROR", "Choose a valid stance.")
             posts = posts.filter(stance_at_write=stance)
         return post_page(
-            request, opinion_cards(posts), "posts", stance=stance, score_field=POST_SORT_FIELDS[sort],
+            request, opinion_cards(posts), "posts", stance=stance, score_field=score_field,
         )
 
     @transaction.atomic
@@ -99,7 +106,10 @@ class DebatePostListView(ContractResponseMixin, APIView):
         debate = lock_debate_for_write(debate_id, request.user.pk)
         if (saved := write.replay()) is not None:
             return Response(saved[0], status=saved[1])
-
+          
+        for item in data["references"]:
+            check_reference_url(item["url"])
+        require_no_banned_words(data["content"])
         participant = DebateParticipant.objects.select_for_update().filter(debate=debate, user=request.user).first()
         if participant is None:
             raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before posting.")

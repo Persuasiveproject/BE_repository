@@ -1,6 +1,13 @@
 from django.contrib import admin
-
+from .models import BannedWord
 from .models import Report
+
+@admin.register(BannedWord)
+class BannedWordAdmin(admin.ModelAdmin):
+    list_display = ("word", "level", "created_at")
+    list_filter = ("level",)
+    search_fields = ("word",)
+
 
 
 @admin.register(Report)
