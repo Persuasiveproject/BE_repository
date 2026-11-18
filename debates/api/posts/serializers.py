@@ -1,4 +1,3 @@
-
 from rest_framework import serializers
 
 from debates.api_contract import MAX_ID
