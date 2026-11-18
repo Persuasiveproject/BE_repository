@@ -251,7 +251,8 @@ class DebateBApiTests(DebateBFixture, TestCase):
             (None, (2, 1, 4, 0, 3)),
             ("latest", (2, 1, 4, 0, 3)),
             ("upvotes", (3, 2, 1, 0, 4)),
-            ("persuasion", (4, 2, 1, 0, 3)),
+            # Under 20 posts, persuasion falls back to upvotes order.
+            ("persuasion", (3, 2, 1, 0, 4)),
         ]:
             with self.subTest(sort=sort):
                 query = {"sort": sort} if sort is not None else {}
