@@ -21,6 +21,7 @@ POST_SORT_FIELDS = {
     "upvotes": "upvote_count",
     "persuasion": "persuasion_count",
 }
+PERSUASION_SORT_MIN_POSTS = 20
 
 
 def visible_opinions():
@@ -76,12 +77,16 @@ class DebatePostListView(ContractResponseMixin, APIView):
         posts = visible_opinions().filter(
             debate_id=debate_id, debate__status__in=PUBLIC_DEBATE_STATES, parent__isnull=True,
         )
+        score_field = POST_SORT_FIELDS[sort]
+        # Few posts: persuasion falls back to upvotes. They fit on one page, so no cursor crosses the switch.
+        if sort == "persuasion" and posts.count() < PERSUASION_SORT_MIN_POSTS:
+            score_field = POST_SORT_FIELDS["upvotes"]
         if stance is not None:
             if stance not in Stance.values:
                 raise ContractError(400, "VALIDATION_ERROR", "Choose a valid stance.")
             posts = posts.filter(stance_at_write=stance)
         return post_page(
-            request, opinion_cards(posts), "posts", stance=stance, score_field=POST_SORT_FIELDS[sort],
+            request, opinion_cards(posts), "posts", stance=stance, score_field=score_field,
         )
 
     @transaction.atomic
