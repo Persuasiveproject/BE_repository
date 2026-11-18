@@ -15,13 +15,18 @@ from .validate import SummaryRejected, clean
 logger = logging.getLogger(__name__)
 
 
+def flat_source_ids(value):
+    """Accepts the old flat list [1, 2] and the per-item list [[1], [2, 3]]."""
+    return [i for v in value or [] for i in (v if isinstance(v, list) else [v])]
+
+
 def drop_stale_summaries(debate_id):
     """근거 글이 삭제·숨김되면 그 요약을 내린다(FC-DB-220-006). 내린 것이 있으면 True."""
     rows = list(AISummary.objects.filter(debate_id=debate_id).only("id", "source_opinion_ids"))
     if not rows:
         return False
     visible = {str(i) for i in visible_posts(debate_id).values_list("id", flat=True)}
-    stale = [r.pk for r in rows if any(str(i) not in visible for i in (r.source_opinion_ids or []))]
+    stale = [r.pk for r in rows if any(str(i) not in visible for i in flat_source_ids(r.source_opinion_ids))]
     if stale:
         AISummary.objects.filter(pk__in=stale).delete()
         logger.info("Dropped %d stale summaries for debate %s", len(stale), debate_id)
@@ -41,7 +46,7 @@ def save_summaries(debate, items_by_stance):
         items = items_by_stance.get(stance) or []
         if not items:
             continue  # 새 항목이 없으면 이전 요약을 그대로 둔다
-        ids = sorted({int(i) for item in items for i in item["sourceIds"]})
+        ids = [sorted({int(i) for i in item["sourceIds"]}) for item in items]
         AISummary.objects.create(
             debate=debate, stance=stance, summary_text=to_summary_text(items),
             source_opinion_ids=ids, model=settings.AI_SUMMARY_MODEL[:50],

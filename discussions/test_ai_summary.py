@@ -12,7 +12,7 @@ from discussions.models import AISummary, Opinion
 from .ai import state
 from .ai.prompt import build_user_text
 from .ai.selection import fingerprint, input_ids, select_inputs
-from .ai.service import generate_summary
+from .ai.service import flat_source_ids, generate_summary
 from .ai.tasks import refresh_ai_summaries
 from .ai.validate import SummaryRejected, clean
 
@@ -66,7 +66,7 @@ class SummaryFixture:
 class SelectionTests(SummaryFixture, TestCase):
     def test_selects_visible_top_opinions_by_stance_with_replies(self):
         self.seed()
-        hidden = self.post(self.parts[0], "숨김 글", upvotes=99)
+        hidden = self.post(self.parts[0], "숨김 글", upvotes=987654)
         hidden.status = Opinion.Status.DELETED
         hidden.save(update_fields=["status"])
         groups = select_inputs(self.debate.pk)
@@ -76,7 +76,7 @@ class SelectionTests(SummaryFixture, TestCase):
         self.assertNotIn(str(hidden.pk), input_ids(groups))
         text = build_user_text(self.debate.title, groups)
         self.assertIn(f"(id={self.con1.pk})", text)
-        self.assertNotIn("99", text)  # 공감 수는 전달하지 않는다
+        self.assertNotIn("987654", text)  # 공감 수는 전달하지 않는다
 
     def test_fingerprint_changes_only_when_selection_changes(self):
         self.seed()
@@ -148,8 +148,8 @@ class GenerateTests(SummaryFixture, TestCase):
         pro = AISummary.objects.get(stance=Stance.PRO)
         con = AISummary.objects.get(stance=Stance.CON)
         self.assertEqual(pro.summary_text, "- 축제가 학생을 모은다는 의견이 있다.")
-        self.assertEqual(pro.source_opinion_ids, [self.pro1.pk])
-        self.assertEqual(con.source_opinion_ids, sorted([self.con1.pk, self.reply.pk]))
+        self.assertEqual(pro.source_opinion_ids, [[self.pro1.pk]])
+        self.assertEqual(con.source_opinion_ids, [sorted([self.con1.pk, self.reply.pk])])
         result, gen = self.run_gen()
         self.assertEqual(result, "unchanged")
         gen.assert_not_called()
@@ -164,7 +164,17 @@ class GenerateTests(SummaryFixture, TestCase):
         self.assertEqual(result, "created")
         gen.assert_called_once()
         for row in AISummary.objects.all():
-            self.assertNotIn(self.reply.pk, row.source_opinion_ids)
+            self.assertNotIn(self.reply.pk, flat_source_ids(row.source_opinion_ids))
+
+    def test_saves_sources_per_item(self):
+        self.seed()
+        self.run_gen(self.llm_output(con=[
+            {"text": "시설 개선이 먼저라는 의견이 있다.", "sourceIds": [str(self.reply.pk), str(self.con1.pk)]},
+            {"text": "비용이 크다는 의견이 있다.", "sourceIds": [str(self.con1.pk)]},
+        ]))
+        con = AISummary.objects.get(stance=Stance.CON)
+        self.assertEqual(con.summary_text.splitlines(), ["- 시설 개선이 먼저라는 의견이 있다.", "- 비용이 크다는 의견이 있다."])
+        self.assertEqual(con.source_opinion_ids, [sorted([self.con1.pk, self.reply.pk]), [self.con1.pk]])
 
     def test_deleted_source_drops_summary_even_without_regeneration(self):
         self.seed()
@@ -248,3 +258,47 @@ class SummaryApiTests(SummaryFixture, TestCase):
         self.assertEqual(res.status_code, 404)
         self.assertEqual(res.json()["error"]["code"], "DEBATE_NOT_FOUND")
         self.assertEqual(self.client.get("/v1/debates/999999/summary").status_code, 404)
+
+    def summary(self, text, sources):
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.CON, summary_text=text, source_opinion_ids=sources, model="m",
+        )
+        res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
+        self.assertEqual(res.status_code, 200)
+        return res.json()["data"]["summaries"][0]
+
+    def source(self, post, root=None):
+        return {"postId": str(post.pk), "rootPostId": str(root.pk) if root else None}
+
+    def test_items_carry_their_own_sources_with_root(self):
+        self.seed()
+        data = self.summary("- 시설 먼저\n- 비용 문제", [[self.con1.pk], [self.con1.pk, self.reply.pk]])
+        self.assertEqual(data["items"], [
+            {"text": "시설 먼저", "sources": [self.source(self.con1)]},
+            {"text": "비용 문제", "sources": [self.source(self.con1), self.source(self.reply, self.pro2)]},
+        ])
+        self.assertEqual(data["sourcePostIds"], [str(self.con1.pk), str(self.reply.pk)])
+
+    def test_old_flat_format_attaches_all_sources_to_every_item(self):
+        self.seed()
+        data = self.summary("- 시설 먼저\n- 비용 문제", [self.con1.pk, self.reply.pk])
+        everything = [self.source(self.con1), self.source(self.reply, self.pro2)]
+        self.assertEqual([i["sources"] for i in data["items"]], [everything, everything])
+        self.assertEqual(data["sourcePostIds"], [str(self.con1.pk), str(self.reply.pk)])
+
+    def test_item_count_mismatch_attaches_all_sources(self):
+        self.seed()
+        data = self.summary("- 시설 먼저\n- 비용 문제", [[self.con1.pk, self.reply.pk]])
+        everything = [self.source(self.con1), self.source(self.reply, self.pro2)]
+        self.assertEqual([i["sources"] for i in data["items"]], [everything, everything])
+
+    def test_hidden_and_deleted_sources_are_left_out(self):
+        self.seed()
+        Opinion.objects.filter(pk=self.reply.pk).update(status=Opinion.Status.DELETED)
+        Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.FILTERED)
+        data = self.summary("- 시설 먼저\n- 비용 문제", [[self.con1.pk, self.pro1.pk], [self.reply.pk]])
+        self.assertEqual(data["items"], [
+            {"text": "시설 먼저", "sources": [self.source(self.con1)]},
+            {"text": "비용 문제", "sources": []},
+        ])
+        self.assertEqual(data["sourcePostIds"], [str(self.con1.pk)])
