@@ -10,6 +10,7 @@ from debates.models import Debate, DebateParticipant, Stance
 from debates.stance_checks import require_before_deadline, require_open_debate
 from discussions.models import Opinion, OpinionReference, OpinionVote
 from economy.models import UserBadge
+from engagement.notifications import notify_reply
 
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
@@ -123,6 +124,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
             Debate.objects.filter(pk=debate.pk).update(opinion_count=F("opinion_count") + 1)
         else:
             Opinion.objects.filter(pk=parent.pk).update(reply_count=F("reply_count") + 1)
+            notify_reply(parent, post)
         response = {"data": post_created_data(post, references)}
         write.save(response, 201)
         return Response(response, status=201)
