@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from debates.api_contract import MAX_ID
 from debates.serializers import utc
-from discussions.models import OpinionReference
+from discussions.models import Opinion, OpinionReference
 
 
 class StringField(serializers.CharField):
@@ -54,13 +54,15 @@ def post_created_data(post, references):
 
 
 def opinion_data(post):
-    badge = post.badge
+    # Deleted and filtered posts keep their place in the list without their content.
+    visible = post.status == Opinion.Status.VISIBLE
+    badge = post.badge if visible else None
     return {
-        **post_created_data(post, post.opinionreference_set.all()),
+        **post_created_data(post, post.opinionreference_set.all() if visible else []),
         "debateId": str(post.debate_id),
         "parentId": str(post.parent_id) if post.parent_id is not None else None,
         "rootId": str(post.root_id) if post.root_id is not None else None,
-        "content": post.content,
+        "content": post.content if visible else "",
         "upvoteCount": post.upvote_count,
         "downvoteCount": post.downvote_count,
         "persuasionCount": post.persuasion_count,
