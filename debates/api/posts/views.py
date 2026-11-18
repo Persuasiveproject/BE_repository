@@ -13,6 +13,7 @@ from economy.models import UserBadge
 
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
+from .spam import require_not_spamming
 
 
 PUBLIC_DEBATE_STATES = (Debate.Status.OPEN, Debate.Status.CLOSED)
@@ -98,6 +99,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
         if participant is None:
             raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before posting.")
         require_open_debate(debate)
+        require_not_spamming(request.user, debate, data["content"])
         parent, root_id = None, None
         if "parentId" in data:
             parent, root_id = reply_target(debate, data["parentId"])
