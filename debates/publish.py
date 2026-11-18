@@ -1,4 +1,5 @@
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from django.db import transaction
 from django.utils import timezone
@@ -8,11 +9,35 @@ from economy.models import CoinTransaction
 
 from .api_contract import ContractError
 from .idempotency import request_hash, require_valid_key, save_response, saved_response
+from .listing import filter_visible
 from .models import Debate, DebateImage
 from .serializers import utc
 
 
 PUBLISH_COST = 1
+MAX_ACTIVE_DEBATES = 3
+MAX_DAILY_PUBLICATIONS = 3
+SEOUL = ZoneInfo("Asia/Seoul")
+
+
+def check_publish_limits(account, now):
+    own_debates = Debate.objects.filter(creator=account)
+    active = filter_visible(own_debates.with_deadline(), Debate.Status.OPEN, now)
+    if active.count() >= MAX_ACTIVE_DEBATES:
+        raise ContractError(
+            409, "PUBLISH_LIMIT_EXCEEDED", "You already have 3 active debates.",
+            details={"limitType": "ACTIVE", "limit": MAX_ACTIVE_DEBATES},
+        )
+
+    day_start = timezone.localtime(now, SEOUL).replace(hour=0, minute=0, second=0, microsecond=0)
+    published_today = own_debates.exclude(status=Debate.Status.DRAFT).filter(
+        started_at__gte=day_start, started_at__lt=day_start + timedelta(days=1),
+    )
+    if published_today.count() >= MAX_DAILY_PUBLICATIONS:
+        raise ContractError(
+            409, "PUBLISH_LIMIT_EXCEEDED", "You already published 3 debates today.",
+            details={"limitType": "DAILY", "limit": MAX_DAILY_PUBLICATIONS},
+        )
 
 
 @transaction.atomic
@@ -47,6 +72,10 @@ def publish_debate(*, debate_id, user, idempotency_key, request_path):
     if account.coin_balance < PUBLISH_COST:
         raise ContractError(409, "INSUFFICIENT_COINS", "Not enough coins to publish.")
 
+    # The account lock serializes publishing even when the requests target different drafts.
+    now = timezone.now()
+    check_publish_limits(account, now)
+
     account.coin_balance -= PUBLISH_COST
     account.save(update_fields=["coin_balance"])
     CoinTransaction.objects.create(
@@ -55,7 +84,6 @@ def publish_debate(*, debate_id, user, idempotency_key, request_path):
         ref_type=CoinTransaction.RefType.DEBATE, ref_id=debate.pk,
     )
 
-    now = timezone.now()
     if debate.type == Debate.Type.ENDLESS:
         duration = timedelta(hours=72)
     else:
