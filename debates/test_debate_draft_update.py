@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from debates.models import Category, Debate
+from moderation.models import BannedWord
 
 
 DRAFT_FIELDS = {
@@ -85,6 +86,22 @@ class DebateDraftUpdateTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["draft"]["title"], "Title")
         self.assert_unchanged()
+
+    def test_rejects_banned_title_or_content_without_applying_other_changes(self):
+        BannedWord.objects.create(word="금지표현", level=BannedWord.Level.BLOCK)
+        for field in ("title", "content"):
+            with self.subTest(field=field):
+                self.assert_error({field: "금지 표현 예시", "durationMinutes": 7}, 400, "BANNED_WORD")
+
+    def test_partial_update_checks_retained_text_and_allows_correction(self):
+        BannedWord.objects.create(word="Content", level=BannedWord.Level.BLOCK)
+        self.assert_error({"title": "New title"}, 400, "BANNED_WORD")
+
+        response = self.patch({"content": "Clean text"})
+        self.assertEqual(response.status_code, 200)
+        self.debate.refresh_from_db()
+        self.assertEqual(self.debate.title, "Title")
+        self.assertEqual(self.debate.content, "Clean text")
 
     def test_kind_switch_checks_final_combination(self):
         self.assert_error({"kind": "ENDLESS"}, 400, "DRAFT_INVALID")
