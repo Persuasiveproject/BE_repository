@@ -1,6 +1,6 @@
 from django.db import transaction
 from django.db.models import F, Prefetch
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -28,6 +28,11 @@ def visible_opinions():
         status=Opinion.Status.VISIBLE,
         participant__debate_id=F("debate_id"),
     )
+
+
+def listed_opinions():
+    # Read side: deleted and filtered posts stay listed so their replies remain reachable.
+    return Opinion.objects.filter(participant__debate_id=F("debate_id"))
 
 
 def opinion_cards(queryset):
@@ -73,7 +78,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
         if sort not in POST_SORT_FIELDS:
             raise ContractError(400, "SORT_INVALID", "Use latest, upvotes, or persuasion.")
         stance = request.query_params.get("stance")
-        posts = visible_opinions().filter(
+        posts = listed_opinions().filter(
             debate_id=debate_id, debate__status__in=PUBLIC_DEBATE_STATES, parent__isnull=True,
         )
         if stance is not None:
@@ -128,10 +133,38 @@ class PostThreadView(ContractResponseMixin, APIView):
     def get(self, request, post_id):
         if not 1 <= post_id <= MAX_ID:
             raise ContractError(400, "VALIDATION_ERROR", "Use a valid post ID.")
-        parent = visible_opinions().filter(pk=post_id, debate__status__in=PUBLIC_DEBATE_STATES).first()
+        parent = listed_opinions().filter(pk=post_id, debate__status__in=PUBLIC_DEBATE_STATES).first()
         if parent is None:
             raise ContractError(404, "POST_NOT_FOUND", "Post not found.")
-        replies = visible_opinions().filter(
+        replies = listed_opinions().filter(
             parent=parent, debate_id=parent.debate_id, debate__status__in=PUBLIC_DEBATE_STATES,
         )
         return post_page(request, opinion_cards(replies), "replies")
+
+
+class PostDetailView(ContractResponseMixin, APIView):
+    # Suspended members may still delete their own posts.
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def delete(self, request, post_id):
+        if not 1 <= post_id <= MAX_ID:
+            raise ContractError(400, "VALIDATION_ERROR", "Use a valid post ID.")
+        not_found = ContractError(404, "POST_NOT_FOUND", "Post not found.")
+        debate_id = listed_opinions().filter(pk=post_id).values_list("debate_id", flat=True).first()
+        if debate_id is None:
+            raise not_found
+        debate = Debate.objects.select_for_update().filter(pk=debate_id, status__in=PUBLIC_DEBATE_STATES).first()
+        if debate is None:
+            raise not_found
+        post = listed_opinions().select_for_update(of=("self",)).select_related("participant").filter(
+            pk=post_id, debate=debate,
+        ).first()
+        if post is None:
+            raise not_found
+        if post.participant.user_id != request.user.pk:
+            raise ContractError(403, "NOT_POST_AUTHOR", "Only the author can delete this post.")
+        if post.status != Opinion.Status.DELETED:
+            post.status = Opinion.Status.DELETED
+            post.save(update_fields=["status"])
+        return Response(status=204)
