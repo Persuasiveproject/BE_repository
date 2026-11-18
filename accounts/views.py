@@ -2,14 +2,17 @@ from collections.abc import Mapping
 import re
 
 from django.db import transaction
+from rest_framework import serializers
+from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from debates.api.joined.views import DebateCursorPagination
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Category
 from debates.serializers import utc
-from economy.models import UserBadge
+from economy.models import CreditHistory, UserBadge
 
 from .models import User, UserIdentityVerification, UserInterestCategory
 
@@ -28,6 +31,20 @@ def serialize_interests(user):
     ]
 
 
+def serialize_badges(user):
+    badges = UserBadge.objects.filter(user=user).select_related("badge").order_by("acquired_at", "badge_id")
+    return [
+        {
+            "id": str(b.badge_id),
+            "name": b.badge.name,
+            "iconUrl": b.badge.icon_url,
+            "acquiredAt": utc(b.acquired_at),
+            "isRepresentative": b.is_representative,
+        }
+        for b in badges
+    ]
+
+
 class MeView(ContractResponseMixin, APIView):
     # Suspended members can still read their own profile.
     permission_classes = [IsAuthenticated]
@@ -41,7 +58,6 @@ class MeView(ContractResponseMixin, APIView):
 
     def get(self, request):
         user = request.user
-        badges = UserBadge.objects.filter(user=user).select_related("badge").order_by("acquired_at", "badge_id")
         return Response({"data": {
             "id": str(user.pk),
             "status": user.status,
@@ -51,17 +67,59 @@ class MeView(ContractResponseMixin, APIView):
             "nickname": user.nickname,
             "interests": serialize_interests(user),
             "credit": format(user.credit, ".6f"),
-            "badges": [
-                {
-                    "id": str(b.badge_id),
-                    "name": b.badge.name,
-                    "iconUrl": b.badge.icon_url,
-                    "acquiredAt": utc(b.acquired_at),
-                    "isRepresentative": b.is_representative,
-                }
-                for b in badges
-            ],
+            "badges": serialize_badges(user),
         }})
+
+
+class MeCreditsView(ContractResponseMixin, APIView):
+    permission_classes = [IsActiveMember]
+
+    def get(self, request):
+        return Response({"data": {
+            "credit": format(request.user.credit, ".6f"),
+            "badges": serialize_badges(request.user),
+        }})
+
+
+class MeBadgesView(ContractResponseMixin, APIView):
+    permission_classes = [IsActiveMember]
+
+    def get(self, request):
+        return Response({"data": {
+            "badges": serialize_badges(request.user),
+        }})
+
+
+class CreditHistoryCursorPagination(DebateCursorPagination):
+    invalid_cursor_code = "CURSOR_INVALID"
+
+    def get_paginated_response(self, data):
+        response = super().get_paginated_response(data)
+        response.data = {
+            "data": {"histories": data},
+            "meta": response.data["meta"],
+        }
+        return response
+
+
+class CreditHistorySerializer(serializers.BaseSerializer):
+    def to_representation(self, history):
+        return {
+            "id": str(history.pk),
+            "amount": format(history.amount, ".6f"),
+            "reason": history.reason,
+            "refId": str(history.ref_id) if history.ref_id is not None else None,
+            "createdAt": utc(history.created_at),
+        }
+
+
+class MeCreditHistoryView(ContractResponseMixin, ListAPIView):
+    permission_classes = [IsActiveMember]
+    serializer_class = CreditHistorySerializer
+    pagination_class = CreditHistoryCursorPagination
+
+    def get_queryset(self):
+        return CreditHistory.objects.filter(user=self.request.user)
 
 
 class MeInterestsView(ContractResponseMixin, APIView):
