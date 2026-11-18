@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Deploy the main API image to a dedicated production EC2",
+  "parameters": {
+    "ImageTag": {
+      "type": "String",
+      "allowedPattern": "^[a-f0-9]{40}$",
+      "interpolationType": "ENV_VAR"
+    },
+    "AwsAccountId": {
+      "type": "String",
+      "allowedPattern": "^[0-9]{12}$",
+      "interpolationType": "ENV_VAR"
+    },
+    "AwsRegion": {
+      "type": "String",
+      "allowedPattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$",
+      "interpolationType": "ENV_VAR"
+    },
+    "EcrRepository": {
+      "type": "String",
+      "allowedPattern": "^[a-z0-9][a-z0-9._/-]*$",
+      "interpolationType": "ENV_VAR"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "deployProductionApi",
+      "inputs": {
+        "timeoutSeconds": "420",
+        "runCommand": [
+          "#!/bin/bash",
+          "# SSM 문서 runCommand 원본. 비밀값 자체는 출력하지 않는다.",
+          "set -euo pipefail",
+          "test \"$(cat /etc/yeongeopjung/environment)\" = production",
+          "envfile=/etc/yeongeopjung/production.env",
+          "ca=/etc/yeongeopjung/rds-ca.pem",
+          "test -r \"$envfile\" && test -r \"$ca\"",
+          "[[ \"${SSM_ImageTag:-}\" =~ ^[a-f0-9]{40}$ ]]",
+          "[[ \"${SSM_AwsAccountId:-}\" =~ ^[0-9]{12}$ ]]",
+          "[[ \"${SSM_AwsRegion:-}\" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]",
+          "[[ \"${SSM_EcrRepository:-}\" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]",
+          "[[ \"$SSM_EcrRepository\" != yeongeopjung-dev-api ]]",
+          "exec 9>/run/yeongeopjung-production-deploy.lock",
+          "flock -n 9",
+          "work=$(mktemp -d)",
+          "export DOCKER_CONFIG=\"$work/docker\"",
+          "trap 'rm -rf -- \"$work\"' EXIT",
+          "registry=\"$SSM_AwsAccountId.dkr.ecr.$SSM_AwsRegion.amazonaws.com\"",
+          "image=\"$registry/$SSM_EcrRepository:$SSM_ImageTag\"",
+          "name=yeongeopjung-production-api",
+          "backup=yeongeopjung-production-api-previous",
+          "aws ecr get-login-password --region \"$SSM_AwsRegion\" | docker login --username AWS --password-stdin \"$registry\"",
+          "docker pull \"$image\"",
+          "common=(--user 1000:1000 --env-file \"$envfile\" -e DJANGO_DEBUG=false -e DJANGO_BEHIND_HTTPS_PROXY=true -e PGSSLMODE=verify-full -e PGSSLROOTCERT=\"$ca\" -v \"$ca:$ca:ro\")",
+          "# 운영 환경 DB 연결·배포 설정 확인 후 마이그레이션은 한 번 실행한다.",
+          "docker run --rm \"${common[@]}\" \"$image\" python manage.py check --deploy --fail-level ERROR",
+          "docker run --rm \"${common[@]}\" \"$image\" python manage.py migrate --noinput",
+          "old=false",
+          "if docker container inspect \"$backup\" >/dev/null 2>&1; then docker rm \"$backup\"; fi",
+          "if docker container inspect \"$name\" >/dev/null 2>&1; then",
+          "  docker stop --time 35 \"$name\"",
+          "  docker rename \"$name\" \"$backup\"",
+          "  old=true",
+          "fi",
+          "rollback() {",
+          "  docker rm -f \"$name\" >/dev/null 2>&1 || true",
+          "  if [[ \"$old\" == true ]]; then",
+          "    docker rename \"$backup\" \"$name\"",
+          "    docker start \"$name\"",
+          "    echo 'Previous API container restarted; database migrations were not reverted.' >&2",
+          "  fi",
+          "}",
+          "if ! docker run -d --name \"$name\" --restart unless-stopped --stop-timeout 35 \"${common[@]}\" -p 8000:8000 \"$image\"; then",
+          "  rollback",
+          "  exit 1",
+          "fi",
+          "if ! docker exec \"$name\" python scripts/check-health.py; then",
+          "  docker logs --tail 30 \"$name\" >&2 || true",
+          "  rollback",
+          "  exit 1",
+          "fi",
+          "docker inspect --format '{{.Config.Image}} {{.Image}}' \"$name\""
+        ]
+      }
+    }
+  ]
+}
