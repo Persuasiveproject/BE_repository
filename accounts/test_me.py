@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 from accounts.models import User, UserIdentityVerification, UserInterestCategory
 from debates.models import Category
 from economy.models import Badge, UserBadge
+from moderation.models import BannedWord
 
 
 PROFILE_FIELDS = {"id", "status", "identityVerified", "nickname", "interests", "credit", "badges"}
@@ -132,3 +133,59 @@ class MeTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_patch_nickname_updates_only_the_authenticated_member(self):
+        nickname = "가" * 30
+        other = User.objects.create_user("other@example.com", nickname)
+        previous_update = self.user.updated_at
+        self.client.force_authenticate(None)
+        credentials = b64encode(f"{self.user.pk}:secret-pass".encode()).decode()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Basic {credentials}")
+
+        response = self.client.patch(self.url, {"nickname": nickname}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(self.user.nickname, nickname)
+        self.assertGreater(self.user.updated_at, previous_update)
+        self.assertEqual(response.json(), {"data": {
+            "nickname": nickname, "updatedAt": self.user.updated_at.isoformat().replace("+00:00", "Z"),
+        }})
+        self.assertEqual(other.nickname, nickname)
+        self.assertEqual(self.me()["data"]["nickname"], nickname)
+
+    def test_patch_rejects_invalid_or_blocked_nickname_without_saving(self):
+        BannedWord.objects.create(word="Blocked", level=BannedWord.Level.BLOCK)
+        previous_update = self.user.updated_at
+        cases = [
+            {}, {"nickname": None}, {"nickname": 123}, {"nickname": ""},
+            {"nickname": " \t\u3000"}, {"nickname": "가" * 31}, {"nickname": "a\x00b"},
+            {"nickname": "bLo ckEd"}, {"nickname": "Valid", "status": "ACTIVE"}, [],
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload):
+                response = self.client.patch(self.url, payload, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "NICKNAME_INVALID")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.nickname, "Member")
+        self.assertEqual(self.user.updated_at, previous_update)
+
+    def test_patch_requires_login(self):
+        self.client.force_authenticate(None)
+
+        response = self.client.patch(self.url, {"nickname": "A"}, format="json")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "AUTH_REQUIRED")
+
+    def test_patch_denies_suspended_members_without_affecting_profile_read(self):
+        self.user.status = User.Status.SUSPENDED
+        self.user.save(update_fields=["status"])
+
+        response = self.client.patch(self.url, {"nickname": "A"}, format="json")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "FORBIDDEN")
+        self.assertEqual(self.me()["data"]["nickname"], "Member")

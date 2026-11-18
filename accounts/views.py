@@ -2,6 +2,7 @@ from collections.abc import Mapping
 import re
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -13,6 +14,7 @@ from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, I
 from debates.models import Category
 from debates.serializers import utc
 from economy.models import CreditHistory, UserBadge
+from moderation.checks import require_no_banned_words
 
 from .models import User, UserIdentityVerification, UserInterestCategory
 
@@ -49,6 +51,11 @@ class MeView(ContractResponseMixin, APIView):
     # Suspended members can still read their own profile.
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [IsActiveMember()]
+        return super().get_permissions()
+
     def handle_exception(self, exc):
         response = super().handle_exception(exc)
         if response.status_code == 401:
@@ -69,6 +76,33 @@ class MeView(ContractResponseMixin, APIView):
             "credit": format(user.credit, ".6f"),
             "badges": serialize_badges(user),
         }})
+
+    def patch(self, request):
+        invalid = ContractError(400, "NICKNAME_INVALID", "Use a nickname from 1 to 30 characters.")
+        data = request.data
+        if not isinstance(data, Mapping) or set(data) != {"nickname"}:
+            raise invalid
+        nickname = data["nickname"]
+        if (
+            not isinstance(nickname, str) or not 1 <= len(nickname) <= 30
+            or not nickname.strip() or "\x00" in nickname
+        ):
+            raise invalid
+
+        try:
+            require_no_banned_words(nickname)
+        except ContractError as error:
+            if error.error["code"] != "BANNED_WORD":
+                raise
+            raise ContractError(400, "NICKNAME_INVALID", error.error["message"]) from error
+
+        updated_at = timezone.now()
+        updated = User.objects.filter(pk=request.user.pk, status=User.Status.ACTIVE).update(
+            nickname=nickname, updated_at=updated_at,
+        )
+        if not updated:
+            raise ContractError(403, "FORBIDDEN", "You do not have permission.")
+        return Response({"data": {"nickname": nickname, "updatedAt": utc(updated_at)}})
 
 
 class MeCreditsView(ContractResponseMixin, APIView):
