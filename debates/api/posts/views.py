@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from debates.api.references.validation import check_reference_url
 from debates.api.writes import IdempotentWrite, lock_debate_for_write
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant, Stance
@@ -89,6 +90,8 @@ class DebatePostListView(ContractResponseMixin, APIView):
         payload = PostInput(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
+        for item in data["references"]:
+            check_reference_url(item["url"])
         write = IdempotentWrite(request, data)
         debate = lock_debate_for_write(debate_id, request.user.pk)
         if (saved := write.replay()) is not None:

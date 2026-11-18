@@ -1,4 +1,3 @@
-from urllib.parse import urlsplit
 
 from rest_framework import serializers
 
@@ -15,12 +14,8 @@ class StringField(serializers.CharField):
 
 
 class ReferenceInput(serializers.Serializer):
-    url = serializers.URLField(max_length=2048)
-
-    def validate_url(self, url):
-        if urlsplit(url).scheme not in {"http", "https"}:
-            raise serializers.ValidationError("Use an HTTP or HTTPS URL.")
-        return url
+    # Checked by check_reference_url in the view so errors use URL_INVALID.
+    url = serializers.JSONField(allow_null=True)
 
 
 class PostInput(serializers.Serializer):
