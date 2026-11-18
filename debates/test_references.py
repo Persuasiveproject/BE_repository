@@ -88,7 +88,7 @@ class PostCreateUrlTests(ReferenceFixture, TestCase):
         self.assertEqual(after, before)
 
     def test_https_link_is_saved_pending_and_hidden_in_list(self):
-        response = self.write("ok", "Reason", references=[{"url": "https://example.com/evidence"}])
+        response = self.write("ok", "Evidence for this opinion", references=[{"url": "https://example.com/evidence"}])
         self.assertEqual(response.status_code, 201)
 
         card = APIClient().get(self.posts_url).json()["data"]["posts"][0]
