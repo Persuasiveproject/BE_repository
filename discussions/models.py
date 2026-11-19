@@ -103,6 +103,7 @@ class AISummary(models.Model):
     class Side(models.TextChoices):
         PRO = Stance.PRO.value, Stance.PRO.label
         CON = Stance.CON.value, Stance.CON.label
+        NEUTRAL = Stance.NEUTRAL.value, Stance.NEUTRAL.label
 
     debate = models.ForeignKey("debates.Debate", on_delete=models.CASCADE)
     stance = models.CharField(max_length=7, choices=Side.choices)

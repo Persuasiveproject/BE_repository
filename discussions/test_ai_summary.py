@@ -13,13 +13,13 @@ from .ai import state
 from .ai.prompt import build_user_text
 from .ai.selection import fingerprint, input_ids, select_inputs
 from .ai.service import flat_source_ids, generate_summary
-from .ai.tasks import refresh_ai_summaries
+from .ai.tasks import refresh_ai_summaries, refresh_summary_on_commit
 from .ai.validate import SummaryRejected, clean
 
 
 def _clear(debate_id):
     r = state._redis()
-    for kind in ("lock", "fp", "fail", "final"):
+    for kind in ("lock", "fp", "fail"):
         r.delete(f"{state.PREFIX}:{kind}:{debate_id}")
 
 
@@ -44,7 +44,7 @@ class SummaryFixture:
 
     def post(self, part, text, upvotes=0, parent=None):
         return Opinion.objects.create(
-            debate=self.debate, participant=part, stance_at_write=part.current_stance,
+            debate_id=part.debate_id, participant=part, stance_at_write=part.current_stance,
             content=text, content_plain=text, upvote_count=upvotes,
             parent=parent, root=parent,
         )
@@ -70,7 +70,8 @@ class SelectionTests(SummaryFixture, TestCase):
         hidden.status = Opinion.Status.DELETED
         hidden.save(update_fields=["status"])
         groups = select_inputs(self.debate.pk)
-        self.assertEqual(list(groups), [Stance.PRO, Stance.CON])  # 유보는 [확인-6] 확정 전 제외
+        self.assertEqual(list(groups), [Stance.PRO, Stance.CON, Stance.NEUTRAL])
+        self.assertEqual([i["id"] for i in groups[Stance.NEUTRAL]], [str(self.neu.pk)])
         self.assertEqual([i["id"] for i in groups[Stance.PRO]], [str(self.pro1.pk), str(self.pro2.pk)])
         self.assertEqual(groups[Stance.PRO][1]["replies"][0]["id"], str(self.reply.pk))
         self.assertNotIn(str(hidden.pk), input_ids(groups))
@@ -124,6 +125,17 @@ class ValidateTests(SimpleTestCase):
             clean(json.dumps({"pro": [{"text": "찬성이 우세하다.", "sourceIds": ["1"]}], "con": []}), {"1"})
         with self.assertRaises(SummaryRejected):
             clean("not json", {"1"})
+
+    def test_rejects_non_array_stances_and_source_ids(self):
+        for payload in (
+            {"pro": {"text": "의견"}},
+            {"con": "의견"},
+            {"neutral": None},
+            {"pro": [{"text": "의견", "sourceIds": 1}]},
+            {"pro": [{"text": "의견", "sourceIds": "1"}]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(SummaryRejected):
+                clean(json.dumps(payload), {"1"})
 
 
 @override_settings(AI_SUMMARY_ENABLED=True, GEMINI_API_KEY="test")
@@ -186,6 +198,34 @@ class GenerateTests(SummaryFixture, TestCase):
         self.assertFalse(AISummary.objects.filter(stance=Stance.CON).exists())
         self.assertTrue(AISummary.objects.filter(stance=Stance.PRO).exists())
 
+    def test_neutral_summary_uses_only_neutral_sources_and_keeps_pro_con_response(self):
+        self.seed()
+        raw = json.loads(self.llm_output())
+        raw["neutral"] = [
+            {"text": "금액을 보고 판단하겠다는 의견이 있다.", "sourceIds": [str(self.neu.pk)]},
+            {"text": "다른 입장의 근거를 쓴 의견이 있다.", "sourceIds": [str(self.pro1.pk)]},
+        ]
+        self.assertEqual(self.run_gen(json.dumps(raw))[0], "created")
+        data = self.client.get(f"/v1/debates/{self.debate.pk}/summary").json()["data"]
+        self.assertEqual([item["stance"] for item in data["summaries"]], ["PRO", "CON"])
+        self.assertEqual(data["neutralSummary"]["sourcePostIds"], [str(self.neu.pk)])
+        self.assertEqual(data["neutralSummary"]["summaryText"], "- 금액을 보고 판단하겠다는 의견이 있다.")
+        self.assertEqual(data["neutralSummary"]["items"], [{
+            "text": "금액을 보고 판단하겠다는 의견이 있다.",
+            "sources": [{"postId": str(self.neu.pk), "rootPostId": None}],
+        }])
+
+    def test_source_hidden_during_generation_is_never_saved(self):
+        self.seed()
+
+        def hide_source(_prompt):
+            Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.FILTERED)
+            return self.llm_output(), {}
+
+        with patch("discussions.ai.client.generate", side_effect=hide_source):
+            self.assertEqual(generate_summary(self.debate.pk), "invalidated")
+        self.assertFalse(AISummary.objects.exists())
+
     def test_llm_failure_backs_off_and_keeps_previous(self):
         self.seed()
         self.run_gen()
@@ -231,9 +271,107 @@ class TaskTests(SummaryFixture, TestCase):
             self.assertEqual(refresh_ai_summaries(), 0)
             self.assertEqual(gen.call_count, 3)
 
+    def test_final_summary_recovers_after_outage_and_survives_redis_loss(self):
+        self.seed()
+        self.debate.status = Debate.Status.CLOSED
+        self.debate.closed_at = timezone.now() - timedelta(days=2)
+        self.debate.save(update_fields=["status", "closed_at"])
+        with patch("discussions.ai.client.generate", return_value=(self.llm_output(), {})) as gen:
+            self.assertEqual(refresh_ai_summaries(), 1)
+            self.debate.refresh_from_db()
+            self.assertIsNotNone(self.debate.ai_summary_finalized_at)
+            _clear(self.debate.pk)
+            self.assertEqual(refresh_ai_summaries(), 0)
+            gen.assert_called_once()
+
+    def test_empty_final_summary_is_retried_and_finalized_after_success(self):
+        self.seed()
+        Debate.objects.filter(pk=self.debate.pk).update(status=Debate.Status.CLOSED, closed_at=timezone.now())
+        empty = json.dumps({"pro": [], "con": [], "neutral": []})
+        url = f"/v1/debates/{self.debate.pk}/summary"
+
+        with patch("discussions.ai.client.generate", side_effect=[(empty, {}), (self.llm_output(), {})]) as gen:
+            with self.assertLogs("discussions.ai.service", level="WARNING"):
+                self.assertEqual(refresh_ai_summaries(), 0)
+            self.debate.refresh_from_db()
+            self.assertIsNone(self.debate.ai_summary_finalized_at)
+            self.assertEqual(self.client.get(url).json()["data"]["status"], "FAILED")
+            self.assertEqual(refresh_ai_summaries(), 0)
+            gen.assert_called_once()
+
+            state.clear_backoff(self.debate.pk)  # 대기 시간이 지난 것으로 처리한다.
+            self.assertEqual(refresh_ai_summaries(), 1)
+            self.debate.refresh_from_db()
+            self.assertIsNotNone(self.debate.ai_summary_finalized_at)
+            self.assertEqual(self.client.get(url).json()["data"]["status"], "READY")
+            self.assertEqual(refresh_ai_summaries(), 0)
+            self.assertEqual(gen.call_count, 2)
+
+    def test_malformed_final_summary_does_not_stop_the_next_debate(self):
+        self.seed()
+        now = timezone.now()
+        Debate.objects.filter(pk=self.debate.pk).update(
+            status=Debate.Status.CLOSED, closed_at=now - timedelta(minutes=1),
+        )
+        next_debate = Debate.objects.create(
+            creator=self.users[1], category=self.category, type=Debate.Type.ENDLESS,
+            title="Another debate", content="Topic", started_at=self.debate.started_at,
+            status=Debate.Status.CLOSED, closed_at=now,
+        )
+        _clear(next_debate.pk)
+        self.addCleanup(_clear, next_debate.pk)
+        participant = DebateParticipant.objects.create(
+            debate=next_debate, user=self.users[1], anonymous_no=1,
+            initial_stance=Stance.PRO, current_stance=Stance.PRO,
+        )
+        posts = [self.post(participant, f"의견 {i}", upvotes=5 - i) for i in range(5)]
+        good = self.llm_output(pro=[{"text": "찬성 의견", "sourceIds": [str(posts[0].pk)]}], con=[])
+        malformed = json.dumps({"pro": {"text": "의견"}})
+
+        with patch("discussions.ai.client.generate", side_effect=[(malformed, {}), (good, {})]) as gen:
+            with self.assertLogs("discussions.ai.service", level="WARNING"):
+                self.assertEqual(refresh_ai_summaries(), 1)
+        self.assertEqual(gen.call_count, 2)
+        self.debate.refresh_from_db()
+        next_debate.refresh_from_db()
+        self.assertIsNone(self.debate.ai_summary_finalized_at)
+        self.assertIsNotNone(next_debate.ai_summary_finalized_at)
+        self.assertEqual(AISummary.objects.get(debate=next_debate).source_opinion_ids, [[posts[0].pk]])
+        url = f"/v1/debates/{self.debate.pk}/summary"
+        self.assertEqual(self.client.get(url).json()["data"]["status"], "FAILED")
+
+    def test_hidden_source_queues_refresh_after_commit_and_reopens_final_summary(self):
+        self.seed()
+        now = timezone.now()
+        Debate.objects.filter(pk=self.debate.pk).update(
+            status=Debate.Status.CLOSED, closed_at=now, ai_summary_finalized_at=now,
+        )
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        with patch("discussions.ai.tasks.refresh_debate_summary.delay") as enqueue:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.pro1.status = Opinion.Status.FILTERED
+                self.pro1.save(update_fields=["status"])
+                enqueue.assert_not_called()
+            enqueue.assert_called_once_with(self.debate.pk)
+        self.debate.refresh_from_db()
+        self.assertIsNone(self.debate.ai_summary_finalized_at)
+
+    def test_bulk_visibility_hook_also_enqueues_after_commit(self):
+        self.seed()
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        with patch("discussions.ai.tasks.refresh_debate_summary.delay") as enqueue:
+            with self.captureOnCommitCallbacks(execute=True):
+                Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.DELETED)
+                refresh_summary_on_commit(self.debate.pk)
+            enqueue.assert_called_once_with(self.debate.pk)
+
 
 class SummaryApiTests(SummaryFixture, TestCase):
-    def test_returns_latest_per_stance_with_visible_sources_only(self):
+    def test_hides_entire_summary_if_its_source_is_deleted(self):
         self.seed()
         AISummary.objects.create(debate=self.debate, stance=Stance.PRO, summary_text="old",
                                  source_opinion_ids=[self.pro1.pk], model="m")
@@ -243,15 +381,43 @@ class SummaryApiTests(SummaryFixture, TestCase):
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
         self.assertEqual(res.status_code, 200)
         items = res.json()["data"]["summaries"]
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["stance"], "PRO")
-        self.assertEqual(items[0]["summaryText"], "- new")
-        self.assertEqual(items[0]["sourcePostIds"], [str(self.pro1.pk)])
-        self.assertTrue(items[0]["createdAt"].endswith("Z"))
+        self.assertEqual(items, [])
+
+    def test_status_distinguishes_generation_updates_and_failure_and_keeps_valid_old_summary(self):
+        self.seed()
+        url = f"/v1/debates/{self.debate.pk}/summary"
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "PENDING")
+        self.assertEqual(data["statusMessage"], "AI 요약을 준비하고 있어요.")
+        token = state.acquire_lock(self.debate.pk)
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "GENERATING")
+        self.assertEqual(data["statusMessage"], "AI가 토론 내용을 요약하고 있어요.")
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
+        )
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "UPDATING")
+        self.assertEqual(data["statusMessage"], "최신 토론 내용을 반영해 AI 요약을 갱신하고 있어요.")
+        self.assertEqual(data["summaries"][0]["summaryText"], "old")
+        self.assertTrue(data["summaries"][0]["createdAt"].endswith("Z"))
+        state.release_lock(self.debate.pk, token)
+        state.set_backoff(self.debate.pk)
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "FAILED")
+        self.assertEqual(data["statusMessage"], "AI 요약을 만들지 못했어요. 잠시 후 다시 확인해 주세요.")
+        self.assertEqual(data["summaries"][0]["summaryText"], "old")
+        state.clear_backoff(self.debate.pk)
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "READY")
+        self.assertEqual(data["statusMessage"], "AI 요약이 준비됐어요.")
 
     def test_empty_and_not_found(self):
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
-        self.assertEqual(res.json(), {"data": {"summaries": []}})
+        self.assertEqual(res.json(), {"data": {
+            "summaries": [], "neutralSummary": None, "status": "INSUFFICIENT",
+            "statusMessage": "AI 요약을 만들려면 공개 글이 5개 이상 필요해요.",
+        }})
         self.debate.status = Debate.Status.DRAFT
         self.debate.save(update_fields=["status"])
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
@@ -292,13 +458,14 @@ class SummaryApiTests(SummaryFixture, TestCase):
         everything = [self.source(self.con1), self.source(self.reply, self.pro2)]
         self.assertEqual([i["sources"] for i in data["items"]], [everything, everything])
 
-    def test_hidden_and_deleted_sources_are_left_out(self):
+    def test_hidden_and_deleted_sources_withhold_stale_summary(self):
         self.seed()
         Opinion.objects.filter(pk=self.reply.pk).update(status=Opinion.Status.DELETED)
         Opinion.objects.filter(pk=self.pro1.pk).update(status=Opinion.Status.FILTERED)
-        data = self.summary("- 시설 먼저\n- 비용 문제", [[self.con1.pk, self.pro1.pk], [self.reply.pk]])
-        self.assertEqual(data["items"], [
-            {"text": "시설 먼저", "sources": [self.source(self.con1)]},
-            {"text": "비용 문제", "sources": []},
-        ])
-        self.assertEqual(data["sourcePostIds"], [str(self.con1.pk)])
+        AISummary.objects.create(
+            debate=self.debate, stance=Stance.CON, summary_text="- 시설 먼저\n- 비용 문제",
+            source_opinion_ids=[[self.con1.pk, self.pro1.pk], [self.reply.pk]], model="m",
+        )
+        res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["data"]["summaries"], [])

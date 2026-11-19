@@ -8,6 +8,7 @@ from discussions.models import Opinion
 
 from .models import Debate, DebateParticipant, DebateStatistics, Stance
 from .result_state import clear_result_state, get_result_state, set_result_state
+from .rewards import award_debate_rewards
 
 logger = logging.getLogger(__name__)
 MIN_TRANSITION_PARTICIPANTS = 20
@@ -55,7 +56,8 @@ def compute_debate_result(debate_id):
     set_result_state(debate_id, "PENDING")
     try:
         with transaction.atomic():
-            save_debate_statistics(debate)
+            result = save_debate_statistics(debate)
+            award_debate_rewards(debate, result.total_participants)
     except Exception:
         # Roll back the partial result before publishing failure under the same lock.
         logger.exception("Failed to compute result for debate %s", debate.pk)
@@ -78,7 +80,7 @@ def save_debate_statistics(debate):
         opinion_count=Count("id", filter=Q(parent__isnull=True)),
         rebuttal_count=Count("id", filter=Q(parent__isnull=False)),
     )
-    DebateStatistics.objects.create(
+    return DebateStatistics.objects.create(
         debate=debate,
         gender_hidden=True,
         age_hidden=True,
