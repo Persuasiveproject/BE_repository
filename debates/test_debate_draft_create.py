@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from debates.models import Category, Debate
+from moderation.models import BannedWord
 
 
 class DebateDraftCreateTests(TestCase):
@@ -48,6 +49,18 @@ class DebateDraftCreateTests(TestCase):
         self.assertIsNone(debate.ends_at)
         self.user.refresh_from_db()
         self.assertEqual(self.user.coin_balance, 50)
+
+    def test_rejects_banned_title_or_content_without_creating_draft(self):
+        BannedWord.objects.create(word="Secret Word", level=BannedWord.Level.BLOCK)
+        for field in ("title", "content"):
+            with self.subTest(field=field):
+                response = self.post(self.body(**{field: "Contains SEcRet \t word"}))
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json(), {"error": {
+                    "code": "BANNED_WORD",
+                    "message": "금지 표현이 포함되어 있어요. 수정해주세요",
+                }})
+                self.assertFalse(Debate.objects.exists())
 
     def test_shared_url_keeps_public_get_and_authenticated_post(self):
         self.assertEqual(self.url, "/v1/debates")

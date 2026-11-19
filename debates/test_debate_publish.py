@@ -1,6 +1,10 @@
-from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone as utc_timezone
+from threading import Barrier
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.db import connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.urls import reverse
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
@@ -160,3 +164,74 @@ class DebatePublishTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["coinBalance"], 0)
+
+    def test_active_limit_ignores_expired_debates_and_keeps_replay(self):
+        now = datetime(2026, 11, 18, 1, tzinfo=utc_timezone.utc)
+        previous_day = now - timedelta(hours=11)
+        for _ in range(2):
+            self.draft(status="OPEN", started_at=previous_day, ends_at=now + timedelta(hours=1))
+        self.draft(status="OPEN", started_at=previous_day, ends_at=now)
+        other = self.draft()
+
+        with patch("debates.publish.timezone.now", return_value=now):
+            first = self.publish()
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(self.publish().json(), first.json())
+            denied = self.publish(other)
+
+        self.assert_error(denied, 409, "PUBLISH_LIMIT_EXCEEDED")
+        self.assertEqual(denied.json()["error"]["details"], {"limitType": "ACTIVE", "limit": 3})
+        other.refresh_from_db()
+        self.assertEqual(other.status, Debate.Status.DRAFT)
+        self.assertEqual(self.balance(), 2)
+        self.assertEqual(CoinTransaction.objects.count(), 1)
+
+    def test_daily_limit_counts_previous_publications_and_resets_at_kst_midnight(self):
+        midnight = datetime(2026, 11, 18, 15, tzinfo=utc_timezone.utc)
+        for status in ("CLOSED", "CANCELED", "OPEN"):
+            self.draft(status=status, started_at=midnight - timedelta(hours=2), ends_at=midnight - timedelta(hours=1))
+
+        with patch("debates.publish.timezone.now", return_value=midnight - timedelta(microseconds=1)):
+            denied = self.publish()
+        self.assert_error(denied, 409, "PUBLISH_LIMIT_EXCEEDED")
+        self.assertEqual(denied.json()["error"]["details"], {"limitType": "DAILY", "limit": 3})
+        self.assertEqual(self.balance(), 3)
+        self.assertFalse(CoinTransaction.objects.exists())
+
+        with patch("debates.publish.timezone.now", return_value=midnight):
+            self.assertEqual(self.publish().status_code, 200)
+
+
+class DebatePublishLimitConcurrencyTests(TransactionTestCase):
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_two_drafts_cannot_take_the_same_last_daily_slot(self):
+        now = datetime(2026, 11, 18, 1, tzinfo=utc_timezone.utc)
+        user = User.objects.create_user("writer@example.com", "Writer", coin_balance=5)
+        category = Category.objects.create(name="Politics")
+        fields = dict(creator=user, category=category, type="QUICK", title="Title", content="Body", duration_minutes=10)
+        for _ in range(2):
+            Debate.objects.create(**fields, status="CLOSED", started_at=now - timedelta(hours=1), closed_at=now)
+        drafts = [Debate.objects.create(**fields) for _ in range(2)]
+        ready = Barrier(2)
+
+        def submit(debate):
+            try:
+                client = APIClient()
+                client.force_authenticate(user)
+                ready.wait(timeout=10)
+                response = client.post(reverse("debate-publish", args=[debate.pk]), HTTP_IDEMPOTENCY_KEY="publish")
+                return response.status_code, response.json()
+            finally:
+                connections.close_all()
+
+        with patch("debates.publish.timezone.now", return_value=now), ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(submit, drafts))
+
+        self.assertCountEqual([status for status, _ in responses], [200, 409])
+        error = next(body["error"] for status, body in responses if status == 409)
+        self.assertEqual(error["code"], "PUBLISH_LIMIT_EXCEEDED")
+        self.assertEqual(error["details"], {"limitType": "DAILY", "limit": 3})
+        user.refresh_from_db()
+        self.assertEqual(user.coin_balance, 4)
+        self.assertEqual(CoinTransaction.objects.filter(user=user).count(), 1)
+        self.assertEqual(Debate.objects.filter(pk__in=[draft.pk for draft in drafts], status="DRAFT").count(), 1)

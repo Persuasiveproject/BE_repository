@@ -96,6 +96,7 @@ GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은
 ### #43 AI 요약 상태와 유보 요약
 
 - `data.summaries`는 찬성·반대 배열을 유지한다. `data.neutralSummary`는 유보·남은 질문이 있으면 기존 요약 항목과 같은 형식으로 반환하고, 없으면 `null`이다.
+- 각 요약의 `items[].text`와 `items[].sources`는 문장별 원문 연결을 제공한다. 근거에는 `postId`와 `rootPostId`가 포함되며, 기존 평면 근거 ID와 문장별 중첩 근거 ID를 모두 읽는다.
 - `data.status`는 `INSUFFICIENT`(공개 글 5개 미만), `PENDING`(작업 대기), `GENERATING`(생성 중), `UPDATING`(갱신 중), `READY`, `FAILED`다. 갱신이나 일시 실패 중에도 근거가 모두 공개된 이전 요약을 표시할 수 있다.
 - `data.statusMessage`는 현재 상태에 대응하는 한국어 안내 문구다. 화면에서는 이 문구를 표시하고 상태별 동작은 `data.status`로 결정한다.
 

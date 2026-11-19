@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from debates.api_contract import ContractError, ContractResponseMixin
 from debates.models import Debate, Stance
 from debates.serializers import utc
-from discussions.ai.service import summary_status
+from discussions.ai.service import flat_source_ids, summary_status
 from discussions.models import AISummary, Opinion
 
 
@@ -38,20 +38,39 @@ class DebateSummaryView(ContractResponseMixin, APIView):
             row = AISummary.objects.filter(debate=debate, stance=stance).order_by("-created_at", "-id").first()
             if row is not None:
                 latest.append(row)
-        source_ids = {int(i) for row in latest for i in (row.source_opinion_ids or []) if str(i).isdigit()}
-        visible = set(Opinion.objects.filter(
+        source_ids = {
+            int(i) for row in latest for i in flat_source_ids(row.source_opinion_ids) if str(i).isdigit()
+        }
+        roots = dict(Opinion.objects.filter(
             debate=debate, pk__in=source_ids, status=Opinion.Status.VISIBLE,
-        ).values_list("id", flat=True))
+        ).values_list("id", "root_id"))
+
+        def public(ids):
+            return [int(i) for i in dict.fromkeys(str(i) for i in ids) if i.isdigit() and int(i) in roots]
+
+        def items(row):
+            lines = row.summary_text.splitlines()
+            groups = row.source_opinion_ids or []
+            if len(groups) != len(lines) or not all(isinstance(g, list) for g in groups):
+                groups = [flat_source_ids(groups)] * len(lines)
+            return [{
+                "text": line.removeprefix("- "),
+                "sources": [
+                    {"postId": str(i), "rootPostId": str(roots[i]) if roots[i] else None} for i in public(ids)
+                ],
+            } for line, ids in zip(lines, groups)]
+
         summaries = []
         neutral = None
         for row in latest:
-            ids = row.source_opinion_ids or []
-            if not ids or any(not str(i).isdigit() or int(i) not in visible for i in ids):
+            ids = flat_source_ids(row.source_opinion_ids)
+            if not ids or any(not str(i).isdigit() or int(i) not in roots for i in ids):
                 continue
             item = {
                 "stance": row.stance,
                 "summaryText": row.summary_text,
-                "sourcePostIds": [str(i) for i in ids],
+                "sourcePostIds": [str(i) for i in public(ids)],
+                "items": items(row),
                 "createdAt": utc(row.created_at),
             }
             if row.stance == Stance.NEUTRAL:
