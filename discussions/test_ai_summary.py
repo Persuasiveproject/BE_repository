@@ -44,7 +44,7 @@ class SummaryFixture:
 
     def post(self, part, text, upvotes=0, parent=None):
         return Opinion.objects.create(
-            debate=self.debate, participant=part, stance_at_write=part.current_stance,
+            debate_id=part.debate_id, participant=part, stance_at_write=part.current_stance,
             content=text, content_plain=text, upvote_count=upvotes,
             parent=parent, root=parent,
         )
@@ -125,6 +125,17 @@ class ValidateTests(SimpleTestCase):
             clean(json.dumps({"pro": [{"text": "찬성이 우세하다.", "sourceIds": ["1"]}], "con": []}), {"1"})
         with self.assertRaises(SummaryRejected):
             clean("not json", {"1"})
+
+    def test_rejects_non_array_stances_and_source_ids(self):
+        for payload in (
+            {"pro": {"text": "의견"}},
+            {"con": "의견"},
+            {"neutral": None},
+            {"pro": [{"text": "의견", "sourceIds": 1}]},
+            {"pro": [{"text": "의견", "sourceIds": "1"}]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(SummaryRejected):
+                clean(json.dumps(payload), {"1"})
 
 
 @override_settings(AI_SUMMARY_ENABLED=True, GEMINI_API_KEY="test")
@@ -259,6 +270,62 @@ class TaskTests(SummaryFixture, TestCase):
             self.assertEqual(refresh_ai_summaries(), 0)
             gen.assert_called_once()
 
+    def test_empty_final_summary_is_retried_and_finalized_after_success(self):
+        self.seed()
+        Debate.objects.filter(pk=self.debate.pk).update(status=Debate.Status.CLOSED, closed_at=timezone.now())
+        empty = json.dumps({"pro": [], "con": [], "neutral": []})
+        url = f"/v1/debates/{self.debate.pk}/summary"
+
+        with patch("discussions.ai.client.generate", side_effect=[(empty, {}), (self.llm_output(), {})]) as gen:
+            with self.assertLogs("discussions.ai.service", level="WARNING"):
+                self.assertEqual(refresh_ai_summaries(), 0)
+            self.debate.refresh_from_db()
+            self.assertIsNone(self.debate.ai_summary_finalized_at)
+            self.assertEqual(self.client.get(url).json()["data"]["status"], "FAILED")
+            self.assertEqual(refresh_ai_summaries(), 0)
+            gen.assert_called_once()
+
+            state.clear_backoff(self.debate.pk)  # 대기 시간이 지난 것으로 처리한다.
+            self.assertEqual(refresh_ai_summaries(), 1)
+            self.debate.refresh_from_db()
+            self.assertIsNotNone(self.debate.ai_summary_finalized_at)
+            self.assertEqual(self.client.get(url).json()["data"]["status"], "READY")
+            self.assertEqual(refresh_ai_summaries(), 0)
+            self.assertEqual(gen.call_count, 2)
+
+    def test_malformed_final_summary_does_not_stop_the_next_debate(self):
+        self.seed()
+        now = timezone.now()
+        Debate.objects.filter(pk=self.debate.pk).update(
+            status=Debate.Status.CLOSED, closed_at=now - timedelta(minutes=1),
+        )
+        next_debate = Debate.objects.create(
+            creator=self.users[1], category=self.category, type=Debate.Type.ENDLESS,
+            title="Another debate", content="Topic", started_at=self.debate.started_at,
+            status=Debate.Status.CLOSED, closed_at=now,
+        )
+        _clear(next_debate.pk)
+        self.addCleanup(_clear, next_debate.pk)
+        participant = DebateParticipant.objects.create(
+            debate=next_debate, user=self.users[1], anonymous_no=1,
+            initial_stance=Stance.PRO, current_stance=Stance.PRO,
+        )
+        posts = [self.post(participant, f"의견 {i}", upvotes=5 - i) for i in range(5)]
+        good = self.llm_output(pro=[{"text": "찬성 의견", "sourceIds": [str(posts[0].pk)]}], con=[])
+        malformed = json.dumps({"pro": {"text": "의견"}})
+
+        with patch("discussions.ai.client.generate", side_effect=[(malformed, {}), (good, {})]) as gen:
+            with self.assertLogs("discussions.ai.service", level="WARNING"):
+                self.assertEqual(refresh_ai_summaries(), 1)
+        self.assertEqual(gen.call_count, 2)
+        self.debate.refresh_from_db()
+        next_debate.refresh_from_db()
+        self.assertIsNone(self.debate.ai_summary_finalized_at)
+        self.assertIsNotNone(next_debate.ai_summary_finalized_at)
+        self.assertEqual(AISummary.objects.get(debate=next_debate).source_opinion_ids, [posts[0].pk])
+        url = f"/v1/debates/{self.debate.pk}/summary"
+        self.assertEqual(self.client.get(url).json()["data"]["status"], "FAILED")
+
     def test_hidden_source_queues_refresh_after_commit_and_reopens_final_summary(self):
         self.seed()
         now = timezone.now()
@@ -305,27 +372,38 @@ class SummaryApiTests(SummaryFixture, TestCase):
     def test_status_distinguishes_generation_updates_and_failure_and_keeps_valid_old_summary(self):
         self.seed()
         url = f"/v1/debates/{self.debate.pk}/summary"
-        self.assertEqual(self.client.get(url).json()["data"]["status"], "PENDING")
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "PENDING")
+        self.assertEqual(data["statusMessage"], "AI 요약을 준비하고 있어요.")
         token = state.acquire_lock(self.debate.pk)
-        self.assertEqual(self.client.get(url).json()["data"]["status"], "GENERATING")
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "GENERATING")
+        self.assertEqual(data["statusMessage"], "AI가 토론 내용을 요약하고 있어요.")
         AISummary.objects.create(
             debate=self.debate, stance=Stance.PRO, summary_text="old", source_opinion_ids=[self.pro1.pk], model="m",
         )
         data = self.client.get(url).json()["data"]
         self.assertEqual(data["status"], "UPDATING")
+        self.assertEqual(data["statusMessage"], "최신 토론 내용을 반영해 AI 요약을 갱신하고 있어요.")
         self.assertEqual(data["summaries"][0]["summaryText"], "old")
         self.assertTrue(data["summaries"][0]["createdAt"].endswith("Z"))
         state.release_lock(self.debate.pk, token)
         state.set_backoff(self.debate.pk)
         data = self.client.get(url).json()["data"]
         self.assertEqual(data["status"], "FAILED")
+        self.assertEqual(data["statusMessage"], "AI 요약을 만들지 못했어요. 잠시 후 다시 확인해 주세요.")
         self.assertEqual(data["summaries"][0]["summaryText"], "old")
         state.clear_backoff(self.debate.pk)
-        self.assertEqual(self.client.get(url).json()["data"]["status"], "READY")
+        data = self.client.get(url).json()["data"]
+        self.assertEqual(data["status"], "READY")
+        self.assertEqual(data["statusMessage"], "AI 요약이 준비됐어요.")
 
     def test_empty_and_not_found(self):
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")
-        self.assertEqual(res.json(), {"data": {"summaries": [], "neutralSummary": None, "status": "INSUFFICIENT"}})
+        self.assertEqual(res.json(), {"data": {
+            "summaries": [], "neutralSummary": None, "status": "INSUFFICIENT",
+            "statusMessage": "AI 요약을 만들려면 공개 글이 5개 이상 필요해요.",
+        }})
         self.debate.status = Debate.Status.DRAFT
         self.debate.save(update_fields=["status"])
         res = self.client.get(f"/v1/debates/{self.debate.pk}/summary")

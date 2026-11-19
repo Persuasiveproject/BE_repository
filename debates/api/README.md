@@ -97,6 +97,17 @@ GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은
 
 - `data.summaries`는 찬성·반대 배열을 유지한다. `data.neutralSummary`는 유보·남은 질문이 있으면 기존 요약 항목과 같은 형식으로 반환하고, 없으면 `null`이다.
 - `data.status`는 `INSUFFICIENT`(공개 글 5개 미만), `PENDING`(작업 대기), `GENERATING`(생성 중), `UPDATING`(갱신 중), `READY`, `FAILED`다. 갱신이나 일시 실패 중에도 근거가 모두 공개된 이전 요약을 표시할 수 있다.
+- `data.statusMessage`는 현재 상태에 대응하는 한국어 안내 문구다. 화면에서는 이 문구를 표시하고 상태별 동작은 `data.status`로 결정한다.
+
+| `data.status` | `data.statusMessage` |
+| --- | --- |
+| `INSUFFICIENT` | AI 요약을 만들려면 공개 글이 5개 이상 필요해요. |
+| `PENDING` | AI 요약을 준비하고 있어요. |
+| `GENERATING` | AI가 토론 내용을 요약하고 있어요. |
+| `UPDATING` | 최신 토론 내용을 반영해 AI 요약을 갱신하고 있어요. |
+| `READY` | AI 요약이 준비됐어요. |
+| `FAILED` | AI 요약을 만들지 못했어요. 잠시 후 다시 확인해 주세요. |
+
 - 삭제·숨김된 근거를 포함한 요약은 본문 전체를 조회에서 제외한다. Opinion 모델의 삭제와 숨김 저장은 커밋 이후 갱신을 예약한다. 글 처리에서 `QuerySet.update()`를 사용하면 같은 트랜잭션 안에서 `discussions.ai.tasks.refresh_summary_on_commit(debate_id)`를 호출한다.
 - AI 요약 주기 실행은 `AI_SUMMARY_ENABLED`와 Gemini 키 설정이 필요하다. Compose에서는 기존 Celery beat가 예약한다. 서버에서 마감·결과 systemd 타이머를 사용하는 경우 AI 요약만 `python manage.py refresh_ai_summaries`로 예약할 수 있다.
 - 영업 팝업 미리보기는 #29 또는 #31의 의견 본문과 근거를 사용한다. 참여 목록의 진행 중 기본 탭은 #28의 `status=OPEN`으로 조회하며, 입장 변화 그래프는 #44의 `sankeyData`를 사용한다.

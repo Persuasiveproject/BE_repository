@@ -9,6 +9,16 @@ from discussions.ai.service import summary_status
 from discussions.models import AISummary, Opinion
 
 
+STATUS_MESSAGES = {
+    "INSUFFICIENT": "AI 요약을 만들려면 공개 글이 5개 이상 필요해요.",
+    "PENDING": "AI 요약을 준비하고 있어요.",
+    "GENERATING": "AI가 토론 내용을 요약하고 있어요.",
+    "UPDATING": "최신 토론 내용을 반영해 AI 요약을 갱신하고 있어요.",
+    "READY": "AI 요약이 준비됐어요.",
+    "FAILED": "AI 요약을 만들지 못했어요. 잠시 후 다시 확인해 주세요.",
+}
+
+
 class DebateSummaryView(ContractResponseMixin, APIView):
     """API 43: GET /v1/debates/:debateId/summary (비회원).
 
@@ -48,8 +58,10 @@ class DebateSummaryView(ContractResponseMixin, APIView):
                 neutral = item
             else:
                 summaries.append(item)
+        status = summary_status(debate.pk, bool(summaries or neutral))
         return Response({"data": {
             "summaries": summaries,
             "neutralSummary": neutral,
-            "status": summary_status(debate.pk, bool(summaries or neutral)),
+            "status": status,
+            "statusMessage": STATUS_MESSAGES[status],
         }})

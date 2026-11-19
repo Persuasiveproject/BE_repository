@@ -111,8 +111,10 @@ def generate_summary(debate_id, *, force=False, finalize=False):
         state.add_cost(estimate_cost(usage))
         neutral_ids = input_ids({Stance.NEUTRAL: groups[Stance.NEUTRAL]})
         items = clean(raw, input_ids(groups), neutral_ids=neutral_ids)
+        if not any(items.values()):
+            raise SummaryRejected("no usable summary items")
         outcome = save_summaries(debate, items, finalize=finalize)
-        if outcome in ("created", "empty"):
+        if outcome == "created":
             state.set_fingerprint(debate_id, fp)
             state.clear_backoff(debate_id)
         logger.info(

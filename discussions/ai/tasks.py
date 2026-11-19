@@ -14,7 +14,7 @@ from .service import generate_summary
 
 INTERVAL = {Debate.Type.QUICK: timedelta(minutes=2), Debate.Type.ENDLESS: timedelta(minutes=5)}
 BATCH = 20
-ATTEMPTED = ("created", "empty", "failed", "invalidated")
+ATTEMPTED = ("created", "failed", "invalidated")
 
 
 def _last_created(debate_ids):
