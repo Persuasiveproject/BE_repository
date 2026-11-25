@@ -17,6 +17,8 @@ from economy.models import CreditHistory, UserBadge
 from moderation.checks import require_no_banned_words
 
 from .models import User, UserIdentityVerification, UserInterestCategory
+from .demographics import demographic_data, update_demographics, validate_demographics
+from .withdrawal import withdraw_account
 
 
 ID_PATTERN = re.compile(r"\A[1-9][0-9]{0,18}\Z")
@@ -59,6 +61,7 @@ def me_data(user):
         "interests": serialize_interests(user),
         "credit": format(user.credit, ".6f"),
         "badges": serialize_badges(user),
+        "demographic": demographic_data(user),
     }
 
 
@@ -80,6 +83,10 @@ class MeView(ContractResponseMixin, APIView):
 
     def get(self, request):
         return Response({"data": me_data(request.user)})
+
+    def delete(self, request):
+        withdraw_account(request.user.pk)
+        return Response(status=204)
 
     def patch(self, request):
         invalid = ContractError(400, "NICKNAME_INVALID", "Use a nickname from 1 to 30 characters.")
@@ -107,6 +114,22 @@ class MeView(ContractResponseMixin, APIView):
         if not updated:
             raise ContractError(403, "FORBIDDEN", "You do not have permission.")
         return Response({"data": {"nickname": nickname, "updatedAt": utc(updated_at)}})
+
+
+class MeDemographicView(ContractResponseMixin, APIView):
+    permission_classes = [IsActiveMember]
+
+    def put(self, request):
+        user = update_demographics(request.user.pk, validate_demographics(request.data))
+        return Response({"data": {"demographic": demographic_data(user)}})
+
+
+class MeDemographicConsentView(ContractResponseMixin, APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        update_demographics(request.user.pk)
+        return Response(status=204)
 
 
 class MeCreditsView(ContractResponseMixin, APIView):

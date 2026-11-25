@@ -118,7 +118,7 @@ def register_verified_identity(identity, *, agreements):
         provider_id=identity.provider_id, email=identity.email, nickname=identity.nickname,
     )
     if created:
-        save_agreements(user_id=user.pk, decisions=agreements)
+        save_agreements(user_id=user.pk, decisions=agreements, during_signup=True)
     elif user.status == User.Status.DELETED:
         raise ContractError(409, "ACCOUNT_UNAVAILABLE", "This account is unavailable.")
     return user, created

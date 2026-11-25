@@ -10,7 +10,7 @@ from debates.api_contract import ContractError
 
 
 @transaction.atomic
-def save_agreements(*, user_id, decisions):
+def save_agreements(*, user_id, decisions, during_signup=False):
     # The future HTTP adapter must decide duplicate/empty-array policy.
     if not isinstance(decisions, Mapping) or any(
         type(key) is not int or key <= 0 or type(value) is not bool
@@ -18,7 +18,8 @@ def save_agreements(*, user_id, decisions):
     ):
         raise ValueError("Use a mapping of positive term IDs to boolean decisions.")
     user = User.objects.select_for_update().get(pk=user_id)
-    if user.status != User.Status.ACTIVE:
+    # A returning account can inherit its suspension before completing signup.
+    if user.status != User.Status.ACTIVE and not (during_signup and user.status == User.Status.SUSPENDED):
         raise ContractError(403, "FORBIDDEN", "This account cannot update agreements.")
     now = timezone.now()
     effective = Term.objects.filter(effective_at__lte=now)

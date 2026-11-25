@@ -125,6 +125,16 @@ class Term(models.Model):
         ]
 
 
+class WithdrawnIdentity(models.Model):
+    fingerprint = models.CharField(primary_key=True, max_length=64)
+    credit = models.DecimalField(max_digits=18, decimal_places=6)
+    was_suspended = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "withdrawn_identities"
+
+
 class UserTermAgreement(models.Model):
     pk = models.CompositePrimaryKey("user_id", "term_id")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)

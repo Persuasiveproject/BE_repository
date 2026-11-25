@@ -36,8 +36,8 @@ def _near_dup(a, b):
     return bool(x and y) and len(x & y) / len(x | y) >= 0.7
 
 
-def clean(raw, allowed_ids):
-    """반환: {Stance.PRO: [{text, sourceIds}], Stance.CON: [...]}"""
+def clean(raw, allowed_ids, *, neutral_ids=()):
+    """Return validated summary items by stance."""
     try:
         data = json.loads(raw)
     except (TypeError, ValueError) as e:
@@ -46,18 +46,24 @@ def clean(raw, allowed_ids):
         raise SummaryRejected("not object")
 
     result = {}
-    for key, stance in (("pro", Stance.PRO), ("con", Stance.CON)):
+    for key, stance in (("pro", Stance.PRO), ("con", Stance.CON), ("neutral", Stance.NEUTRAL)):
+        items = data.get(key, [])
+        if not isinstance(items, list):
+            raise SummaryRejected(f"{key} must be an array")
+        sources = neutral_ids if stance == Stance.NEUTRAL else allowed_ids
         kept = []
-        for item in (data.get(key) or [])[:MAX_ITEMS]:
+        for item in items[:MAX_ITEMS]:
             if not isinstance(item, dict):
                 continue
             text = str(item.get("text") or "").strip()
-            ids = [str(i) for i in (item.get("sourceIds") or [])]
+            source_ids = item.get("sourceIds", [])
+            if not isinstance(source_ids, list):
+                raise SummaryRejected(f"{key}.sourceIds must be an array")
             if not text or len(text) > MAX_ITEM_CHARS or FILLER.search(text):
                 continue
             if JUDGE.search(text) and not ATTRIBUTED.search(text):
                 raise SummaryRejected("judgement expression")
-            ids = list(dict.fromkeys(i for i in ids if i in allowed_ids))
+            ids = list(dict.fromkeys(i for i in map(str, source_ids) if i in sources))
             if not ids:  # 근거가 없거나 입력에 없는 글만 가리키면 버린다
                 continue
             if any(_near_dup(text, k["text"]) for k in kept):

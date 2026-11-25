@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from debates.api_contract import ContractError, ContractResponseMixin
+from debates.demographics import demographic_distributions
 from debates.models import Debate, DebateStatistics
 from debates.results import MIN_TRANSITION_PARTICIPANTS
 from debates.result_state import get_result_state
@@ -46,6 +47,9 @@ class DebateResultView(ContractResponseMixin, APIView):
 
         total = result.total_participants
         show_transitions = total >= MIN_TRANSITION_PARTICIPANTS
+        gender, age, region = (None, None, None)
+        if show_transitions:
+            gender, age, region = demographic_distributions(debate, minimum_participants=MIN_TRANSITION_PARTICIPANTS)
         return Response({"data": {
             "counts": {
                 "totalParticipants": total,
@@ -58,11 +62,10 @@ class DebateResultView(ContractResponseMixin, APIView):
                 "stanceKeptCount": result.stance_kept_count if show_transitions else None,
             },
             "sankeyData": result.sankey_data if show_transitions else [],
-            # Keep demographics private until aggregation and withdrawal rules are settled.
-            "genderData": None,
-            "ageData": None,
-            "regionData": None,
-            "genderHidden": not show_transitions or result.gender_hidden,
-            "ageHidden": not show_transitions or result.age_hidden,
+            "genderData": gender,
+            "ageData": age,
+            "regionData": region,
+            "genderHidden": gender is None,
+            "ageHidden": age is None,
             "computedAt": utc(result.computed_at),
         }})

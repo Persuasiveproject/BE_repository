@@ -36,7 +36,7 @@ def debate_detail_data(debate, status):
         "endsAt": utc(debate.deadline),
         "closedAt": utc(closed_at),
         "canceledAt": utc(debate.canceled_at),
-        "participantCount": debate.participant_count,
+        "participantCount": debate.public_participant_count(status),
     }
 
 

@@ -7,6 +7,7 @@ class Notification(models.Model):
         REPLY = "REPLY"
         PERSUASION_REWARD = "PERSUASION_REWARD"
         DEBATE_CLOSED = "DEBATE_CLOSED"
+        DEBATE_CANCELED = "DEBATE_CANCELED"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     type = models.CharField(max_length=17, choices=Type.choices)

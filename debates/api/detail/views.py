@@ -35,10 +35,11 @@ class DebateDetailView(ContractResponseMixin, APIView):
         participation = None
         if active_member and not draft:
             participation = DebateParticipant.objects.filter(debate=debate, user=request.user).first()
+        status = debate.effective_status(timezone.now())
         return Response({"data": {
-            "debate": debate_detail_data(debate, debate.effective_status(timezone.now())),
+            "debate": debate_detail_data(debate, status),
             "images": [image_data(image, draft) for image in images],
-            "participantCount": debate.participant_count,
+            "participantCount": debate.public_participant_count(status),
             "myParticipation": participation_data(participation) if participation is not None else None,
         }})
 

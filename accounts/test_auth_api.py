@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 from accounts import kakao
 from accounts.api import phone
 from accounts.api.tokens import store
-from accounts.models import Term, User, UserTermAgreement
+from accounts.models import Term, User, UserTermAgreement, WithdrawnIdentity
 from economy.models import CoinTransaction, CreditHistory
 
 
@@ -34,6 +34,28 @@ class AuthFixture:
         body = {"signupToken": ticket, "nickname": "판다", "agreedTermIds": self.required, **extra}
         return self.client.post(reverse("auth-signup"), body, format="json")
 
+    def assert_suspended_account_can_rejoin(self, begin):
+        initial = self.signup(begin().json()["data"]["signupToken"], nickname="Before")
+        self.assertEqual(initial.status_code, 201, initial.content)
+        old = initial.json()["data"]
+        User.objects.filter(pk=old["user"]["id"]).update(credit="12.500000", status=User.Status.SUSPENDED)
+        member = APIClient()
+        member.credentials(HTTP_AUTHORIZATION=f"Bearer {old['accessToken']}")
+        self.assertEqual(member.delete(reverse("me")).status_code, 204)
+
+        again = begin()
+        self.assertEqual(again.status_code, 200, again.content)
+        rejoined = self.signup(again.json()["data"]["signupToken"], nickname="After")
+        self.assertEqual(rejoined.status_code, 201, rejoined.content)
+        new = rejoined.json()["data"]
+        self.assertNotEqual(new["user"]["id"], old["user"]["id"])
+        self.assertEqual((new["user"]["status"], new["user"]["credit"]), ("SUSPENDED", "12.500000"))
+        self.assertFalse(CoinTransaction.objects.filter(user_id=new["user"]["id"]).exists())
+        self.assertEqual(UserTermAgreement.objects.filter(user_id=new["user"]["id"], agreed=True).count(), 2)
+        self.assertFalse(WithdrawnIdentity.objects.exists())
+        member.credentials(HTTP_AUTHORIZATION=f"Bearer {new['accessToken']}")
+        self.assertEqual(member.get(reverse("me")).json()["data"], new["user"])
+
 
 @override_settings(AUTH_SMS_PROVIDER="mock", AUTH_SMS_DEV_CODE_VISIBLE=True)
 class PhoneFlowTests(AuthFixture, TestCase):
@@ -44,6 +66,13 @@ class PhoneFlowTests(AuthFixture, TestCase):
 
     def verify(self, code, number="010-1234-5678"):
         return self.client.post(reverse("auth-phone-verify"), {"phoneNumber": number, "code": code}, format="json")
+
+    def test_suspended_rejoin_through_phone_and_signup_apis(self):
+        def begin():
+            phone.redis().delete(phone._key("cooldown", phone.phone_id("01012345678")))
+            return self.verify(self.code())
+
+        self.assert_suspended_account_can_rejoin(begin)
 
     def test_signup_then_bearer_session_then_logout_then_direct_login(self):
         res = self.verify(self.code())
@@ -139,6 +168,10 @@ class KakaoFlowTests(AuthFixture, TestCase):
     def kakao(self, identity):
         with patch("accounts.api.views.kakao.verify_authorization_code", return_value=identity):
             return self.client.post(reverse("auth-kakao"), self.body, format="json")
+
+    def test_suspended_rejoin_through_kakao_and_signup_apis(self):
+        identity = kakao.KakaoIdentity("9231", None, None)
+        self.assert_suspended_account_can_rejoin(lambda: self.kakao(identity))
 
     def test_signup_with_verified_email_then_login(self):
         res = self.kakao(kakao.KakaoIdentity("777", "m@example.com", "카카오닉"))

@@ -9,8 +9,10 @@ from decimal import Decimal
 from django.contrib.auth.hashers import make_password
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
-from accounts.models import User
+from accounts.models import User, WithdrawnIdentity
+from accounts.withdrawal import rejoin_fingerprint
 from economy.models import CoinTransaction, CreditHistory
 
 
@@ -41,18 +43,30 @@ def register_kakao_user(*, provider_id, email, nickname):
     if not nickname.strip():
         raise ValidationError({"nickname": "A nonblank nickname is required."})
 
-    user, created = User.objects.get_or_create(
-        provider="KAKAO", provider_id=provider_id,
-        defaults={
-            "email": User.objects.normalize_email(email),
-            "nickname": nickname,
-            "password": make_password(None),
-            "coin_balance": SIGNUP_COINS,
-            "credit": SIGNUP_CREDIT,
-        },
+    return register_provider_user(
+        provider="KAKAO", provider_id=provider_id, email=User.objects.normalize_email(email), nickname=nickname,
     )
+
+
+@transaction.atomic
+def register_provider_user(*, provider, provider_id, email, nickname):
+    """Apply rejoin state only after the provider credential has been verified."""
+    fingerprint = rejoin_fingerprint(provider, provider_id)
+    previous = WithdrawnIdentity.objects.select_for_update().filter(pk=fingerprint).first()
+    rejoining = previous is not None and previous.expires_at > timezone.now()
+    user, created = User.objects.get_or_create(provider=provider, provider_id=provider_id, defaults={
+        "email": email, "nickname": nickname, "password": make_password(None),
+        "coin_balance": 0 if rejoining else SIGNUP_COINS,
+        "credit": previous.credit if rejoining else SIGNUP_CREDIT,
+        "status": User.Status.SUSPENDED if rejoining and previous.was_suspended else User.Status.ACTIVE,
+    })
     if created:
-        record_signup_bonus(user)
+        if rejoining:
+            CreditHistory.objects.create(user=user, amount=user.credit, reason="REJOIN_RESTORE", ref_id=user.pk)
+        else:
+            record_signup_bonus(user)
+        if previous is not None:
+            previous.delete()
     return user, created
 
 

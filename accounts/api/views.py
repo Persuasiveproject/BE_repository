@@ -165,7 +165,7 @@ class SignupView(AuthView):
                 with transaction.atomic():
                     user, created = phone.register_phone_user(number=ticket["p"], nickname=nickname)
                     if created:
-                        save_agreements(user_id=user.pk, decisions=decisions)
+                        save_agreements(user_id=user.pk, decisions=decisions, during_signup=True)
             elif method == "KAKAO":
                 identity = kakao.KakaoIdentity(ticket["k"], ticket.get("e"), nickname)
                 user, created = kakao.register_verified_identity(identity, agreements=decisions)

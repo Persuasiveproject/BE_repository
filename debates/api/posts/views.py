@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import F, Prefetch
+from django.db.models import F, Prefetch, Q
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -37,6 +37,12 @@ def visible_opinions():
     return Opinion.objects.filter(
         status=Opinion.Status.VISIBLE,
         participant__debate_id=F("debate_id"),
+    )
+
+
+def public_opinion_rows():
+    return Opinion.objects.filter(participant__debate_id=F("debate_id")).filter(
+        Q(status=Opinion.Status.VISIBLE) | Q(status=Opinion.Status.DELETED, participant__user__status="DELETED"),
     )
 
 
@@ -83,12 +89,12 @@ class DebatePostListView(ContractResponseMixin, APIView):
         if sort not in POST_SORT_FIELDS:
             raise ContractError(400, "SORT_INVALID", "Use latest, upvotes, or persuasion.")
         stance = request.query_params.get("stance")
-        posts = visible_opinions().filter(
+        posts = public_opinion_rows().filter(
             debate_id=debate_id, debate__status__in=PUBLIC_DEBATE_STATES, parent__isnull=True,
         )
         score_field = POST_SORT_FIELDS[sort]
         # Few posts: persuasion falls back to upvotes. They fit on one page, so no cursor crosses the switch.
-        if sort == "persuasion" and posts.count() < PERSUASION_SORT_MIN_POSTS:
+        if sort == "persuasion" and posts.filter(status=Opinion.Status.VISIBLE).count() < PERSUASION_SORT_MIN_POSTS:
             score_field = POST_SORT_FIELDS["upvotes"]
         if stance is not None:
             if stance not in Stance.values:
@@ -147,10 +153,10 @@ class PostThreadView(ContractResponseMixin, APIView):
     def get(self, request, post_id):
         if not 1 <= post_id <= MAX_ID:
             raise ContractError(400, "VALIDATION_ERROR", "Use a valid post ID.")
-        parent = visible_opinions().filter(pk=post_id, debate__status__in=PUBLIC_DEBATE_STATES).first()
+        parent = public_opinion_rows().filter(pk=post_id, debate__status__in=PUBLIC_DEBATE_STATES).first()
         if parent is None:
             raise ContractError(404, "POST_NOT_FOUND", "Post not found.")
-        replies = visible_opinions().filter(
+        replies = public_opinion_rows().filter(
             parent=parent, debate_id=parent.debate_id, debate__status__in=PUBLIC_DEBATE_STATES,
         )
         return post_page(request, opinion_cards(replies), "replies")

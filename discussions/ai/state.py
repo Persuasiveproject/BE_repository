@@ -10,10 +10,10 @@ from debates.result_state import _client
 
 logger = logging.getLogger(__name__)
 PREFIX = "debates:summary:v1"
-LOCK_SECONDS = 180
+# Gemini can make three 60-second attempts plus retry delays.
+LOCK_SECONDS = 240
 FAIL_BACKOFF_SECONDS = 60
 FINGERPRINT_SECONDS = 7 * 24 * 3600
-FINAL_DONE_SECONDS = 3 * 3600
 
 
 def _redis():
@@ -33,8 +33,10 @@ def acquire_lock(debate_id):
 def release_lock(debate_id, token):
     key = f"{PREFIX}:lock:{debate_id}"
     try:
-        if _redis().get(key) == token:
-            _redis().delete(key)
+        _redis().eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end",
+            1, key, token,
+        )
     except RedisError:
         pass  # TTL이 지나면 풀린다
 
@@ -69,12 +71,15 @@ def set_backoff(debate_id):
     _set(f"{PREFIX}:fail:{debate_id}", "1", FAIL_BACKOFF_SECONDS)
 
 
-def final_done(debate_id):
-    return _get(f"{PREFIX}:final:{debate_id}") is not None
+def is_generating(debate_id):
+    return _get(f"{PREFIX}:lock:{debate_id}") is not None
 
 
-def mark_final_done(debate_id):
-    _set(f"{PREFIX}:final:{debate_id}", "1", FINAL_DONE_SECONDS)
+def clear_backoff(debate_id):
+    try:
+        _redis().delete(f"{PREFIX}:fail:{debate_id}")
+    except RedisError:
+        pass
 
 
 def _cost_key():

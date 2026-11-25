@@ -13,7 +13,7 @@ from economy.models import Badge, UserBadge
 from moderation.models import BannedWord
 
 
-PROFILE_FIELDS = {"id", "status", "identityVerified", "nickname", "interests", "credit", "badges"}
+PROFILE_FIELDS = {"id", "status", "identityVerified", "nickname", "interests", "credit", "badges", "demographic"}
 
 
 class MeTests(TestCase):
