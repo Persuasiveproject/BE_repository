@@ -172,9 +172,6 @@ class SignupView(AuthView):
             else:
                 raise ContractError(400, "SIGNUP_INVALID", "가입 정보를 확인하지 못했어요. 처음부터 다시 해 주세요.")
         except ValidationError as e:
-            if method == "KAKAO" and not ticket.get("e"):
-                # #73 정책: 이메일 없는 카카오 가입은 아직 보류(가짜 이메일을 만들지 않는다).
-                raise ContractError(400, "KAKAO_EMAIL_REQUIRED", "카카오 계정 이메일 제공에 동의해야 가입할 수 있어요.") from e
             raise ContractError(400, "NICKNAME_INVALID", "닉네임을 확인해 주세요.") from e
         except IntegrityError as e:
             raise ContractError(409, "ALREADY_REGISTERED", "이미 가입된 계정이에요. 로그인해 주세요.") from e
