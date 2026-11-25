@@ -78,6 +78,11 @@ class User(AbstractBaseUser):
 
     class Meta:
         db_table = "users"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_id"], name="user_provider_identity_uniq",
+            ),
+        ]
 
     @property
     def is_active(self):
