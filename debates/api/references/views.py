@@ -1,6 +1,8 @@
 import re
 
 from django.db import transaction
+from django.utils import timezone
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,6 +13,7 @@ from debates.stance_checks import require_open_debate
 from discussions.models import OpinionReference
 from moderation.models import Report
 
+from .safety import REFERENCE_CHECK_TTL
 from .validation import check_reference_url
 
 
@@ -92,7 +95,25 @@ class PostReferenceView(ContractResponseMixin, APIView):
 
 
 class ReferenceDetailView(ContractResponseMixin, APIView):
-    permission_classes = [IsActiveMember]
+    def get_permissions(self):
+        return [AllowAny()] if self.request.method == "GET" else [IsActiveMember()]
+
+    def get(self, request, reference_id):
+        require_valid_id(reference_id, "reference ID")
+        reference = OpinionReference.objects.filter(
+            pk=reference_id, opinion__in=visible_opinions(), opinion__debate__status__in=PUBLIC_DEBATE_STATES,
+        ).first()
+        if reference is None:
+            raise reference_not_found()
+        status = reference.safe_browsing_status
+        if status == OpinionReference.SafetyStatus.UNSAFE:
+            raise ContractError(403, "REFERENCE_UNSAFE", "This link was flagged as unsafe.")
+        if (
+            status != OpinionReference.SafetyStatus.SAFE or reference.checked_at is None
+            or reference.checked_at < timezone.now() - REFERENCE_CHECK_TTL
+        ):
+            raise ContractError(409, "REFERENCE_CHECK_PENDING", "This link is still being checked.")
+        return Response({"data": {"url": reference.url}})
 
     @transaction.atomic
     def delete(self, request, reference_id):
