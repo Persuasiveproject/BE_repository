@@ -28,6 +28,13 @@ class PostInput(serializers.Serializer):
         return int(value)
 
 
+class CoachInput(serializers.Serializer):
+    content = StringField(max_length=1000)
+    parentId = StringField(required=False, max_length=19, trim_whitespace=False)
+
+    validate_parentId = PostInput.validate_parentId
+
+
 def reference_data(reference):
     return {
         "referenceId": str(reference.pk),

@@ -6,7 +6,7 @@ from debates.api_contract import ContractError, ContractResponseMixin
 from debates.models import Debate, Stance
 from debates.serializers import utc
 from discussions.ai.service import flat_source_ids
-from discussions.models import AISummary, Opinion
+from discussions.models import AIIssueMap, AISummary, Opinion
 
 
 class DebateSummaryView(ContractResponseMixin, APIView):
@@ -57,3 +57,49 @@ class DebateSummaryView(ContractResponseMixin, APIView):
             "items": items(row),
             "createdAt": utc(row.created_at),
         } for row in latest]}})
+
+
+class DebateIssuesView(ContractResponseMixin, APIView):
+    """GET /v1/debates/:debateId/issues (비회원). 끝장토론의 최신 쟁점 정리.
+
+    근거 글이 숨김·삭제되면 그 근거를 빼고, 근거가 하나도 남지 않은 쪽은 null로 내린다.
+    awaiting: 한쪽만 이야기한 쟁점에서 아직 답하지 않은 쪽(PRO/CON). 양쪽 다 있으면 null.
+    정리가 없으면 issues는 빈 배열이다.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, debate_id):
+        debate = Debate.objects.filter(pk=debate_id).only("id", "status").first()
+        if debate is None or debate.status in (Debate.Status.DRAFT, Debate.Status.CANCELED):
+            raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
+        row = AIIssueMap.objects.filter(debate=debate).order_by("-created_at", "-id").first()
+        if row is None:
+            return Response({"data": {"issues": [], "createdAt": None}})
+
+        ids = {
+            int(i) for issue in row.issues for key in ("pro", "con")
+            for i in ((issue.get(key) or {}).get("sourceIds") or []) if str(i).isdigit()
+        }
+        roots = dict(Opinion.objects.filter(
+            debate=debate, pk__in=ids, status=Opinion.Status.VISIBLE,
+        ).values_list("id", "root_id"))
+
+        def side(entry):
+            if not entry:
+                return None
+            sources = [
+                {"postId": str(i), "rootPostId": str(roots[i]) if roots[i] else None}
+                for i in dict.fromkeys(int(x) for x in entry.get("sourceIds") or [] if str(x).isdigit())
+                if i in roots
+            ]
+            return {"text": entry["text"], "sources": sources} if sources else None
+
+        issues = []
+        for issue in row.issues:
+            pro, con = side(issue.get("pro")), side(issue.get("con"))
+            if not pro and not con:
+                continue
+            awaiting = None if pro and con else (Stance.CON if pro else Stance.PRO)
+            issues.append({"title": issue["title"], "pro": pro, "con": con, "awaiting": awaiting})
+        return Response({"data": {"issues": issues, "createdAt": utc(row.created_at)}})
