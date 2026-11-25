@@ -15,18 +15,17 @@ from discussions.models import Opinion
 from .models import Scrap
 
 
-def bookmark_page(request, scraps):
-    salt = f"engagement.bookmarks:{request.user.pk}"
+def created_page(request, rows, salt):
     cursor = request.query_params.get("cursor")
     if cursor is not None:
         try:
-            created_at, scrap_id = signing.loads(cursor, salt=salt)
+            created_at, row_id = signing.loads(cursor, salt=salt)
             timestamp = datetime.fromisoformat(created_at)
         except (signing.BadSignature, TypeError, ValueError) as error:
             raise ContractError(400, "CURSOR_INVALID", "Use a valid cursor.") from error
-        scraps = scraps.filter(Q(created_at__lt=timestamp) | Q(created_at=timestamp, pk__lt=scrap_id))
+        rows = rows.filter(Q(created_at__lt=timestamp) | Q(created_at=timestamp, pk__lt=row_id))
 
-    page = list(scraps.order_by("-created_at", "-id")[:PAGE_SIZE + 1])
+    page = list(rows.order_by("-created_at", "-id")[:PAGE_SIZE + 1])
     next_cursor = None
     if len(page) > PAGE_SIZE:
         page.pop()
@@ -78,7 +77,7 @@ class BookmarkListView(ContractResponseMixin, APIView):
             debate__status__in=PUBLIC_DEBATE_STATES, participant__debate_id=F("debate_id"),
         )
         scraps = opinion_scraps(request.user).filter(target_id__in=Subquery(accessible.values("pk")))
-        page, next_cursor = bookmark_page(request, scraps)
+        page, next_cursor = created_page(request, scraps, f"engagement.bookmarks:{request.user.pk}")
         posts = opinion_cards(accessible.filter(pk__in=[scrap.target_id for scrap in page])).in_bulk()
         return Response({
             "data": {"posts": [
