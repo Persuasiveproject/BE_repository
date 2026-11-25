@@ -6,9 +6,10 @@ from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import Cursor, CursorPagination
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
+from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin
 from debates.listing import filter_visible
 from debates.models import Debate, DebateParticipant
 from .serializers import JoinedDebateSerializer
@@ -46,7 +47,7 @@ class DebateCursorPagination(CursorPagination):
 
 class JoinedDebateListView(ContractResponseMixin, ListAPIView):
     serializer_class = JoinedDebateSerializer
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
     pagination_class = DebateCursorPagination
 
     @cached_property

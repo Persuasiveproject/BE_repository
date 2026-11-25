@@ -185,13 +185,11 @@ class ChangeStanceAPITests(StanceFixture, TestCase):
     def test_suspended_member_cannot_use_participation_endpoints(self):
         self.user.status = User.Status.SUSPENDED
         self.user.save(update_fields=["status"])
-        responses = (
-            self.patch_stance(),
-            self.client.get(reverse("my-stance-events", args=[self.debate.id])),
-        )
-        for response in responses:
-            self.assertEqual(response.status_code, 403)
-            self.assertEqual(response.data["error"]["code"], "FORBIDDEN")
+        response = self.patch_stance()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["error"]["code"], "ACCOUNT_SUSPENDED")
+        # Reading their own history stays open.
+        self.assertEqual(self.client.get(reverse("my-stance-events", args=[self.debate.id])).status_code, 200)
 
     def test_draft_is_hidden_and_canceled_debate_cannot_be_changed(self):
         self.debate.status = Debate.Status.DRAFT

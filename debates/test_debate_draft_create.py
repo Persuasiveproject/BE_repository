@@ -161,5 +161,5 @@ class DebateDraftCreateTests(TestCase):
         response = self.post(self.body())
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["error"]["code"], "FORBIDDEN")
+        self.assertEqual(response.json()["error"]["code"], "ACCOUNT_SUSPENDED")
         self.assertFalse(Debate.objects.exists())

@@ -150,6 +150,4 @@ class CreditAndBadgeTests(TestCase):
         self.client.force_authenticate(self.user)
         for url in urls:
             with self.subTest(phase="suspended", url=url):
-                response = self.client.get(url)
-                self.assertEqual(response.status_code, 403)
-                self.assertEqual(response.json()["error"]["code"], "FORBIDDEN")
+                self.assertEqual(self.client.get(url).status_code, 200)

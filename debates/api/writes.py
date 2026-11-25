@@ -5,7 +5,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from accounts.models import APIIdempotencyRecord, User
-from debates.api_contract import ContractError
+from debates.api_contract import ContractError, require_active_member
 from debates.models import Debate
 
 
@@ -14,8 +14,10 @@ def lock_debate_for_write(debate_id, user_id):
     debate = Debate.objects.with_deadline().select_for_update().filter(pk=debate_id).first()
     if debate is None:
         raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
-    if not User.objects.select_for_update().filter(pk=user_id, status=User.Status.ACTIVE).exists():
+    account = User.objects.select_for_update().only("id", "status").filter(pk=user_id).first()
+    if account is None:
         raise ContractError(403, "FORBIDDEN", "This account cannot modify the debate.")
+    require_active_member(account)
     return debate
 
 

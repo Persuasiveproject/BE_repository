@@ -206,7 +206,7 @@ class NotificationReadTests(TestCase):
         self.client.force_authenticate(self.user)
         suspended = self.client.patch(url, {"isRead": True}, format="json")
         self.assertEqual(suspended.status_code, 403)
-        self.assertEqual(suspended.json()["error"]["code"], "FORBIDDEN")
+        self.assertEqual(suspended.json()["error"]["code"], "ACCOUNT_SUSPENDED")
 
     def test_read_all_marks_only_own_unread_notifications(self):
         self.notify(is_read=False)
@@ -242,4 +242,4 @@ class NotificationReadTests(TestCase):
         self.client.force_authenticate(self.user)
         suspended = self.client.post(url)
         self.assertEqual(suspended.status_code, 403)
-        self.assertEqual(suspended.json()["error"]["code"], "FORBIDDEN")
+        self.assertEqual(suspended.json()["error"]["code"], "ACCOUNT_SUSPENDED")
