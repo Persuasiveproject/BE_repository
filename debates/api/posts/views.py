@@ -14,6 +14,7 @@ from economy.models import UserBadge
 from engagement.notifications import notify_reply
 from moderation.checks import require_no_banned_words
 
+from .formatting import format_content
 from .pagination import post_page
 from .serializers import PostInput, post_created_data
 from .spam import require_not_spamming
@@ -102,6 +103,9 @@ class DebatePostListView(ContractResponseMixin, APIView):
         payload = PostInput(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
+        content_html, content_plain = format_content(data["content"])
+        if not content_plain:
+            raise ContractError(400, "VALIDATION_ERROR", "내용을 입력해주세요")
         write = IdempotentWrite(request, data)
         debate = lock_debate_for_write(debate_id, request.user.pk)
         if (saved := write.replay()) is not None:
@@ -109,12 +113,12 @@ class DebatePostListView(ContractResponseMixin, APIView):
           
         for item in data["references"]:
             check_reference_url(item["url"])
-        require_no_banned_words(data["content"])
+        require_no_banned_words(content_plain)
         participant = DebateParticipant.objects.select_for_update().filter(debate=debate, user=request.user).first()
         if participant is None:
             raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before posting.")
         require_open_debate(debate)
-        require_not_spamming(request.user, debate, data["content"])
+        require_not_spamming(request.user, debate, content_plain)
         parent, root_id = None, None
         if "parentId" in data:
             parent, root_id = reply_target(debate, data["parentId"])
@@ -125,7 +129,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
         require_before_deadline(debate)
         post = Opinion.objects.create(
             debate=debate, participant=participant, parent=parent, root_id=root_id, badge_id=badge_id,
-            stance_at_write=participant.current_stance, content=data["content"], content_plain=data["content"],
+            stance_at_write=participant.current_stance, content=content_html, content_plain=content_plain,
         )
         references = OpinionReference.objects.bulk_create([
             OpinionReference(opinion=post, url=item["url"]) for item in data["references"]

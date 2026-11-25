@@ -28,6 +28,6 @@ def require_not_spamming(user, debate, content):
     text = _normalize(content)
     previous = Opinion.objects.filter(
         participant__user=user, debate=debate, created_at__gt=now - DUPLICATE_WINDOW,
-    ).values_list("content", flat=True)
+    ).values_list("content_plain", flat=True)
     if any(_normalize(item) == text for item in previous):
         raise _rate_limited("DUPLICATE")
