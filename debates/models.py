@@ -24,7 +24,11 @@ class Category(models.Model):
 class DebateQuerySet(models.QuerySet):
     def with_deadline(self):
         # Older published rows can have no stored ends_at.
+        withdrawn = DebateParticipant.objects.filter(
+            debate_id=models.OuterRef("pk"), user__status="DELETED",
+        ).order_by().values("debate_id").annotate(count=models.Count("pk")).values("count")
         return self.annotate(
+            withdrawn_participant_count=Coalesce(models.Subquery(withdrawn), models.Value(0)),
             deadline=Coalesce(
                 "ends_at",
                 models.Case(
@@ -92,6 +96,11 @@ class Debate(models.Model):
         if self.status == self.Status.OPEN and self.deadline and self.deadline <= at:
             return self.Status.CLOSED
         return self.status
+
+    def public_participant_count(self, effective_status):
+        if effective_status == self.Status.OPEN:
+            return max(0, self.participant_count - self.withdrawn_participant_count)
+        return self.participant_count
 
     class Meta:
         db_table = "debates"

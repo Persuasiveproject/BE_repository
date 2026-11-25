@@ -37,6 +37,7 @@ def successful_persuasions(debate):
         persuasion__opinion__debate=debate,
         persuasion__opinion__participant__debate=debate,
         persuasion__opinion__status=Opinion.Status.VISIBLE,
+        persuasion__opinion__participant__user__deleted_at__isnull=True,
     ).exclude(
         participant__initial_stance=F("participant__current_stance"),
     ).exclude(
@@ -77,7 +78,7 @@ def award_debate_rewards(debate, total_participants):
         recipients.add(debate.creator_id)
     # The same user can earn rewards in multiple debates settled concurrently.
     # Serialize their credit caps and coin balance in a stable lock order.
-    accounts = User.objects.select_for_update().filter(pk__in=recipients).order_by("pk")
+    accounts = User.objects.select_for_update().filter(pk__in=recipients).exclude(status=User.Status.DELETED).order_by("pk")
     for account in accounts:
         wins = successes.get(account.pk)
         if wins:

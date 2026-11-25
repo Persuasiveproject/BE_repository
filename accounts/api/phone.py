@@ -14,12 +14,9 @@ import secrets
 import time
 
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
-from django.db import transaction
 from redis.exceptions import RedisError
 
-from accounts.models import User
-from accounts.registration import SIGNUP_COINS, SIGNUP_CREDIT, record_signup_bonus
+from accounts.registration import register_provider_user
 from debates.api_contract import ContractError
 from debates.result_state import _client
 
@@ -125,20 +122,5 @@ def check_code(number, code):
     return True
 
 
-@transaction.atomic
 def register_phone_user(*, number, nickname):
-    """휴대폰 확인을 마친 번호로 회원을 만든다. 반환: (user, created). 가입 보상은 새로 만들 때만.
-
-    이메일 없는 가입이다. 휴대폰 가입에는 이메일이 없으므로 빈 값으로 둔다(팀 확인 필요: docs/auth-api.md).
-    """
-    pid = phone_id(number)
-    existing = User.objects.filter(provider=PROVIDER, provider_id=pid).first()
-    if existing is not None:
-        return existing, False
-    user, created = User.objects.get_or_create(provider=PROVIDER, provider_id=pid, defaults={
-        "email": "", "nickname": nickname, "password": make_password(None),
-        "coin_balance": SIGNUP_COINS, "credit": SIGNUP_CREDIT,
-    })
-    if created:
-        record_signup_bonus(user)
-    return user, created
+    return register_provider_user(provider=PROVIDER, provider_id=phone_id(number), email="", nickname=nickname)

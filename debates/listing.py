@@ -32,7 +32,7 @@ def debate_list_item(debate, as_of):
         "status": status,
         "createdAt": utc(debate.created_at),
         "categoryId": str(debate.category_id),
-        "participantCount": debate.participant_count,
+        "participantCount": debate.public_participant_count(status),
         "opinionCount": debate.opinion_count,
         "viewCount": debate.view_count,
         "startedAt": utc(debate.started_at),

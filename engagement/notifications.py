@@ -2,11 +2,25 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from accounts.models import User
+from debates.models import DebateParticipant
 from discussions.models import Opinion
 
 from .models import Notification
 
 REPLY_BUNDLE_WINDOW = timedelta(seconds=60)
+
+
+def notify_debate_canceled(debate):
+    recipients = DebateParticipant.objects.filter(debate=debate).exclude(
+        user__status=User.Status.DELETED,
+    ).values_list("user_id", flat=True)
+    Notification.objects.bulk_create([
+        Notification(user_id=user_id, type=Notification.Type.DEBATE_CANCELED,
+                     title="참여한 토론이 취소됐어요", body=debate.title,
+                     target_type="DEBATE", target_id=debate.pk)
+        for user_id in recipients
+    ], batch_size=500)
 
 
 def notify_reply(parent, reply):

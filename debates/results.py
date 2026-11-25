@@ -6,7 +6,8 @@ from django.utils import timezone
 
 from discussions.models import Opinion
 
-from .models import Debate, DebateParticipant, DebateStatistics, Stance
+from .demographics import participants_for_result
+from .models import Debate, DebateStatistics, Stance
 from .result_state import clear_result_state, get_result_state, set_result_state
 from .rewards import award_debate_rewards
 
@@ -70,7 +71,7 @@ def compute_debate_result(debate_id):
 
 def save_debate_statistics(debate):
     groups = (
-        DebateParticipant.objects.filter(debate=debate)
+        participants_for_result(debate)
         .values("initial_stance", "current_stance")
         .annotate(count=Count("id"))
         .order_by("initial_stance", "current_stance")

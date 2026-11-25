@@ -25,7 +25,8 @@ class HomeView(ContractResponseMixin, APIView):
         popular = open_debates.annotate(
             recent_joins=Count(
                 "debateparticipant",
-                filter=Q(debateparticipant__joined_at__gt=as_of - timedelta(hours=24)),
+                filter=Q(debateparticipant__joined_at__gt=as_of - timedelta(hours=24))
+                & ~Q(debateparticipant__user__status="DELETED"),
             ),
         ).order_by("-recent_joins", "-id")[:HOME_SIZE]
 
