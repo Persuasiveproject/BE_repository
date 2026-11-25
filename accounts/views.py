@@ -45,6 +45,21 @@ def serialize_badges(user):
     ]
 
 
+def me_data(user):
+    """GET /v1/me와 로그인·가입 응답이 같이 쓰는 회원 정보."""
+    return {
+        "id": str(user.pk),
+        "status": user.status,
+        "identityVerified": UserIdentityVerification.objects.filter(
+            user=user, status=UserIdentityVerification.Status.VERIFIED,
+        ).exists(),
+        "nickname": user.nickname,
+        "interests": serialize_interests(user),
+        "credit": format(user.credit, ".6f"),
+        "badges": serialize_badges(user),
+    }
+
+
 class MeView(ContractResponseMixin, APIView):
     # Suspended members can still read their own profile.
     permission_classes = [IsAuthenticated]
@@ -57,18 +72,7 @@ class MeView(ContractResponseMixin, APIView):
         return response
 
     def get(self, request):
-        user = request.user
-        return Response({"data": {
-            "id": str(user.pk),
-            "status": user.status,
-            "identityVerified": UserIdentityVerification.objects.filter(
-                user=user, status=UserIdentityVerification.Status.VERIFIED,
-            ).exists(),
-            "nickname": user.nickname,
-            "interests": serialize_interests(user),
-            "credit": format(user.credit, ".6f"),
-            "badges": serialize_badges(user),
-        }})
+        return Response({"data": me_data(request.user)})
 
 
 class MeCreditsView(ContractResponseMixin, APIView):
