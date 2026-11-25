@@ -47,23 +47,43 @@ def report_input(data):
     return target_type, int(target_id), reason.strip()
 
 
+def create_report(user, target_type, target, reason):
+    field = TARGETS[target_type][0]
+    with transaction.atomic():
+        # Serialize the same member's reports; there is no unique constraint to rely on.
+        User.objects.select_for_update().filter(pk=user.pk).exists()
+        if Report.objects.filter(reporter=user, target_type=target_type, **{field: target}).exists():
+            raise ContractError(409, "ALREADY_REPORTED", "You already reported this.")
+        return Report.objects.create(reporter=user, target_type=target_type, reason=reason, **{field: target})
+
+
+def report_created(report):
+    return Response({"data": {"reportId": str(report.pk), "status": report.status}}, status=201)
+
+
 class ReportCreateView(ContractResponseMixin, APIView):
     # Suspended members can still report.
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         target_type, target_id, reason = report_input(request.data)
-        field, targets = TARGETS[target_type]
-        target = targets().filter(pk=target_id).first()
+        target = TARGETS[target_type][1]().filter(pk=target_id).first()
         if target is None:
             raise ContractError(404, "REPORT_TARGET_NOT_FOUND", "Report target not found.")
+        return report_created(create_report(request.user, target_type, target, reason))
 
-        with transaction.atomic():
-            # Serialize the same member's reports; there is no unique constraint to rely on.
-            User.objects.select_for_update().filter(pk=request.user.pk).exists()
-            if Report.objects.filter(reporter=request.user, target_type=target_type, **{field: target}).exists():
-                raise ContractError(409, "ALREADY_REPORTED", "You already reported this.")
-            report = Report.objects.create(
-                reporter=request.user, target_type=target_type, reason=reason, **{field: target},
-            )
-        return Response({"data": {"reportId": str(report.pk), "status": report.status}}, status=201)
+
+class ReferenceChallengeView(ContractResponseMixin, APIView):
+    # Suspended members can still report.
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, reference_id):
+        if not 1 <= reference_id <= MAX_ID:
+            raise ContractError(400, "VALIDATION_ERROR", "Use a valid reference ID.")
+        reference = TARGETS[Report.TargetType.REFERENCE][1]().filter(pk=reference_id).first()
+        if reference is None:
+            raise ContractError(404, "REFERENCE_NOT_FOUND", "Reference not found.")
+        reason = request.data.get("reason") if isinstance(request.data, dict) else None
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 255:
+            raise ContractError(400, "REASON_INVALID", "Enter a reason of 1 to 255 characters.")
+        return report_created(create_report(request.user, Report.TargetType.REFERENCE, reference, reason.strip()))
