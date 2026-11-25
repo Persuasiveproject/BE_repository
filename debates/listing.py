@@ -1,11 +1,26 @@
+import re
+
 from django.db.models import Q
 
-from .api_contract import ContractError
-from .models import Debate
+from .api_contract import MAX_ID, ContractError
+from .models import Category, Debate
 from .serializers import utc
 
 
 VISIBLE_STATUSES = (Debate.Status.OPEN, Debate.Status.CLOSED)
+ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
+
+
+def filter_category(debates, category_id, *, active_only=False):
+    categories = Category.objects.all()
+    if active_only:
+        categories = categories.filter(is_active=True)
+    if (
+        not ID_PATTERN.fullmatch(category_id) or int(category_id) > MAX_ID
+        or not categories.filter(pk=category_id).exists()
+    ):
+        raise ContractError(400, "FILTER_INVALID", "Use an existing category ID.")
+    return debates.filter(category_id=category_id)
 
 
 def filter_visible(debates, status, as_of):

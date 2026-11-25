@@ -1,5 +1,3 @@
-import re
-
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -10,14 +8,11 @@ from rest_framework.response import Response
 from debates.api.draft.serializers import DraftInput
 from debates.api.draft.views import active_category, validated_draft
 from debates.api.joined.views import DebateCursorPagination
-from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
-from debates.listing import filter_visible
-from debates.models import Category, Debate
+from debates.api_contract import ContractError, ContractResponseMixin, IsActiveMember
+from debates.listing import filter_category, filter_visible
+from debates.models import Debate
 from debates.serializers import utc
 from .serializers import DebateListSerializer
-
-
-ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
 
 
 class PublicDebateCursorPagination(DebateCursorPagination):
@@ -70,12 +65,7 @@ class DebateListView(ContractResponseMixin, ListAPIView):
 
         category_id = params.get("categoryId")
         if category_id is not None:
-            if (
-                not ID_PATTERN.fullmatch(category_id) or int(category_id) > MAX_ID
-                or not Category.objects.filter(pk=category_id).exists()
-            ):
-                raise filter_invalid("Use an existing category ID.")
-            debates = debates.filter(category_id=category_id)
+            debates = filter_category(debates, category_id)
 
         query = params.get("query", "").strip()
         if len(query) > 100:

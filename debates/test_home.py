@@ -127,3 +127,44 @@ class HomeTests(TestCase):
 
     def test_empty(self):
         self.assertEqual(self.home(), {"data": {"popularDebates": [], "recommendedDebates": []}})
+
+    def test_category_filters_both_feeds_before_ranking_and_fallback(self):
+        UserInterestCategory.objects.create(user=self.user, category=self.interest)
+        others = [self.debate(category=self.interest) for _ in range(11)]
+        for debate in others:
+            self.join(debate, hours_ago=1)
+        older = self.debate()
+        newer = self.debate()
+        self.join(older, hours_ago=1)
+        self.debate(started_at=self.now - timedelta(hours=1))
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get(self.url, {"categoryId": str(self.category.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual([item["id"] for item in data["popularDebates"]], [str(older.pk), str(newer.pk)])
+        self.assertEqual([item["id"] for item in data["recommendedDebates"]], [str(newer.pk), str(older.pk)])
+
+    def test_category_without_live_debates_returns_empty_feeds(self):
+        self.debate()
+        response = self.client.get(self.url, {"categoryId": str(self.interest.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"data": {"popularDebates": [], "recommendedDebates": []}})
+
+    def test_invalid_home_category_filters(self):
+        inactive = Category.objects.create(name="Inactive", is_active=False)
+        for query in (
+            "categoryId=",
+            "categoryId=abc",
+            "categoryId=0",
+            "categoryId=9223372036854775808",
+            "categoryId=999",
+            f"categoryId={inactive.pk}",
+            f"categoryId={self.category.pk}&categoryId={self.interest.pk}",
+        ):
+            with self.subTest(query=query):
+                response = self.client.get(f"{self.url}?{query}")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "FILTER_INVALID")

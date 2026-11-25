@@ -1,4 +1,4 @@
-"""Install the worker, automatic closing and result timers on an existing API host.
+"""Install the worker and service timers on an existing API host.
 
 Run as root on the selected EC2, after its API/DB/Redis configuration is ready.
 Does not provision Redis, change credentials, migrate databases, or start beat.
@@ -83,6 +83,29 @@ Unit=ye-closing-{environment}.service
 [Install]
 WantedBy=timers.target
 ''',
+        f'ye-coin-refill-{environment}.service': f'''[Unit]
+Description=Yeongup {environment} weekly coin refill
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ye-runtime/runtime.py coin-refill {environment}
+Restart=on-failure
+RestartSec=60
+''',
+        f'ye-coin-refill-{environment}.timer': f'''[Unit]
+Description=Yeongup {environment} weekly coin refill at Monday midnight KST
+
+[Timer]
+OnCalendar=Mon *-*-* 00:00:00 Asia/Seoul
+AccuracySec=1s
+Persistent=true
+Unit=ye-coin-refill-{environment}.service
+
+[Install]
+WantedBy=timers.target
+''',
     }
 
 
@@ -109,9 +132,9 @@ def main():
     runtime = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime)
     name, _ = runtime.api_config(args.environment)
-    # Fail before changing host files if the closing command is not deployed.
-    subprocess.run(['docker', 'exec', name, 'python', 'manage.py', 'help', 'close_debates'],
-                   check=True, stdout=subprocess.DEVNULL)
+    for command in ('close_debates', 'refill_weekly_coins'):
+        subprocess.run(['docker', 'exec', name, 'python', 'manage.py', 'help', command],
+                       check=True, stdout=subprocess.DEVNULL)
     target = Path('/opt/ye-runtime')
     target.mkdir(mode=0o755, parents=True, exist_ok=True)
     for source, name, mode in ((runtime_source, 'runtime.py', 0o700),
@@ -129,7 +152,8 @@ def main():
     subprocess.run(['systemctl', 'enable', '--now', f'ye-worker-{args.environment}.service'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', f'ye-results-{args.environment}.timer'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', f'ye-closing-{args.environment}.timer'], check=True)
-    print('Worker, automatic closing and result recovery enabled; Celery beat is not enabled')
+    subprocess.run(['systemctl', 'enable', '--now', f'ye-coin-refill-{args.environment}.timer'], check=True)
+    print('Worker, automatic closing, result recovery, and weekly coin refill enabled; Celery beat is not enabled')
 
 
 if __name__ == '__main__':
