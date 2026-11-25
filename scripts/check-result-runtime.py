@@ -95,13 +95,18 @@ for environment in ('development', 'production'):
     run = subprocess.run([sys.executable, 'scripts/install-result-runtime.py', environment, '--render-only'],
                          cwd=ROOT, check=True, text=True, capture_output=True)
     units = json.loads(run.stdout)
-    assert len(units) == 5
+    assert len(units) == 7
     assert 'OnUnitInactiveSec=10' in units[f'ye-results-{environment}.timer']
     assert f'runtime.py results {environment}' in units[f'ye-results-{environment}.service']
     assert f'runtime.py worker {environment}' in units[f'ye-worker-{environment}.service']
     assert 'OnUnitInactiveSec=10' in units[f'ye-closing-{environment}.timer']
     assert f'Unit=ye-closing-{environment}.service' in units[f'ye-closing-{environment}.timer']
     assert f'runtime.py closing {environment}' in units[f'ye-closing-{environment}.service']
+    refill_timer = units[f'ye-coin-refill-{environment}.timer']
+    assert 'OnCalendar=Mon *-*-* 00:00:00 Asia/Seoul' in refill_timer
+    assert 'Persistent=true' in refill_timer
+    assert f'Unit=ye-coin-refill-{environment}.service' in refill_timer
+    assert f'runtime.py coin-refill {environment}' in units[f'ye-coin-refill-{environment}.service']
     assert all('celery beat' not in source for source in units.values())
 bad = subprocess.run([sys.executable, 'scripts/install-result-runtime.py', 'invalid', '--render-only'],
                      cwd=ROOT, text=True, capture_output=True)

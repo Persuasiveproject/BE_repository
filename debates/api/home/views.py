@@ -7,8 +7,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import UserInterestCategory
-from debates.api_contract import ContractResponseMixin
-from debates.listing import debate_list_item, filter_visible
+from debates.api_contract import ContractError, ContractResponseMixin
+from debates.listing import debate_list_item, filter_category, filter_visible
 from debates.models import Debate
 
 
@@ -21,6 +21,11 @@ class HomeView(ContractResponseMixin, APIView):
     def get(self, request):
         as_of = timezone.now()
         open_debates = filter_visible(Debate.objects.with_deadline(), Debate.Status.OPEN, as_of)
+        categories = request.query_params.getlist("categoryId")
+        if len(categories) > 1:
+            raise ContractError(400, "FILTER_INVALID", "Select at most one category.")
+        if categories:
+            open_debates = filter_category(open_debates, categories[0], active_only=True)
 
         popular = open_debates.annotate(
             recent_joins=Count(

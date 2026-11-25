@@ -11,6 +11,7 @@ class CoinTransaction(models.Model):
         SIGNUP_BONUS = "SIGNUP_BONUS"
         ADMIN_GRANT = "ADMIN_GRANT"
         REFUND = "REFUND"
+        WEEKLY_REFILL = "WEEKLY_REFILL"
 
     class RefType(models.TextChoices):
         USER = "USER"

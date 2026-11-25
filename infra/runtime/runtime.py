@@ -52,11 +52,14 @@ def run_closing(name):
 
 def main():
     mode, environment = sys.argv[1:]
-    if environment not in ('development', 'production') or mode not in ('worker', 'results', 'closing'):
+    if environment not in ('development', 'production') or mode not in ('worker', 'results', 'closing', 'coin-refill'):
         raise SystemExit('Unexpected runtime mode/environment')
     name, config = api_config(environment)
     if mode == 'closing':
         run_closing(name)
+        return
+    if mode == 'coin-refill':
+        subprocess.run(['docker', 'exec', name, 'python', 'manage.py', 'refill_weekly_coins'], check=True)
         return
     worker_name = 'yeongeopjung-' + ('dev' if environment == 'development' else 'production') + '-worker'
     if mode == 'results':
