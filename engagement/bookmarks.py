@@ -2,6 +2,7 @@ from datetime import datetime
 
 from django.core import signing
 from django.db.models import F, Q, Subquery
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -71,7 +72,7 @@ def bookmark_data(post):
 
 
 class BookmarkListView(ContractResponseMixin, APIView):
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         accessible = Opinion.objects.filter(

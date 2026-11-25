@@ -17,9 +17,19 @@ class ContractError(APIException):
         super().__init__(message, code=code)
 
 
+def require_active_member(user):
+    if user.status == User.Status.SUSPENDED:
+        raise ContractError(403, "ACCOUNT_SUSPENDED", "이용이 제한된 계정이에요. 내 글 삭제와 신고만 할 수 있어요.")
+    if user.status != User.Status.ACTIVE:
+        raise ContractError(403, "FORBIDDEN", "You do not have permission.")
+
+
 class IsActiveMember(IsAuthenticated):
     def has_permission(self, request, view):
-        return super().has_permission(request, view) and request.user.status == User.Status.ACTIVE
+        if not super().has_permission(request, view):
+            return False
+        require_active_member(request.user)
+        return True
 
 
 class ContractResponseMixin:

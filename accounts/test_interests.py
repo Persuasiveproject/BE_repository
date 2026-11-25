@@ -155,7 +155,7 @@ class MeInterestsTests(MeInterestsFixture, TestCase):
         self.client.force_authenticate(self.user)
         suspended = self.put({"categoryIds": []})
         self.assertEqual(suspended.status_code, 403)
-        self.assertEqual(suspended.json()["error"]["code"], "FORBIDDEN")
+        self.assertEqual(suspended.json()["error"]["code"], "ACCOUNT_SUSPENDED")
 
 
 class MeInterestsConcurrencyTests(MeInterestsFixture, TransactionTestCase):

@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -25,7 +26,7 @@ class MyStanceView(ContractResponseMixin, APIView):
 
 
 class MyStanceEventListView(ContractResponseMixin, APIView):
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, debate_id):
         debate = get_object_or_404(

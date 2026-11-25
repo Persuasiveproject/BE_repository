@@ -72,7 +72,7 @@ class MeView(ContractResponseMixin, APIView):
 
 
 class MeCreditsView(ContractResponseMixin, APIView):
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({"data": {
@@ -82,7 +82,7 @@ class MeCreditsView(ContractResponseMixin, APIView):
 
 
 class MeBadgesView(ContractResponseMixin, APIView):
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({"data": {
@@ -114,7 +114,7 @@ class CreditHistorySerializer(serializers.BaseSerializer):
 
 
 class MeCreditHistoryView(ContractResponseMixin, ListAPIView):
-    permission_classes = [IsActiveMember]
+    permission_classes = [IsAuthenticated]
     serializer_class = CreditHistorySerializer
     pagination_class = CreditHistoryCursorPagination
 

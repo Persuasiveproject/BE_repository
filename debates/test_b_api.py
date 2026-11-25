@@ -124,12 +124,12 @@ class DebateBApiTests(DebateBFixture, TestCase):
         guest = APIClient()
         response = guest.post(self.join_url, {"stance": Stance.PRO}, format="json", headers={"Idempotency-Key": "guest"})
         self.assertEqual((response.status_code, response.json()["error"]["code"]), (401, "AUTHENTICATION_REQUIRED"))
-        for status in (User.Status.SUSPENDED, User.Status.DELETED):
+        for status, code in ((User.Status.SUSPENDED, "ACCOUNT_SUSPENDED"), (User.Status.DELETED, "FORBIDDEN")):
             with self.subTest(status=status):
                 self.member.status = status
                 self.member.save(update_fields=["status"])
                 response = self.join()
-                self.assertEqual((response.status_code, response.json()["error"]["code"]), (403, "FORBIDDEN"))
+                self.assertEqual((response.status_code, response.json()["error"]["code"]), (403, code))
         self.assertFalse(DebateParticipant.objects.exists())
         self.assertFalse(APIIdempotencyRecord.objects.exists())
 
