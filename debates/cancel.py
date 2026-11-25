@@ -3,7 +3,6 @@ from django.utils import timezone
 
 from accounts.models import User
 from economy.models import CoinTransaction
-from engagement.notifications import notify_debate_canceled
 
 from .api_contract import ContractError
 from .models import Debate
@@ -58,7 +57,6 @@ def cancel_debate(*, debate_id, operator, refund, reason):
     debate.canceled_by = operator
     debate.cancel_reason = reason
     debate.save(update_fields=["status", "canceled_at", "canceled_by", "cancel_reason"])
-    notify_debate_canceled(debate)
     return {
         "data": {
             "debateId": str(debate.pk),

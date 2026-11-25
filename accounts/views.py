@@ -61,6 +61,7 @@ def me_data(user):
         "interests": serialize_interests(user),
         "credit": format(user.credit, ".6f"),
         "badges": serialize_badges(user),
+        "demographic": demographic_data(user),
     }
 
 
@@ -81,7 +82,7 @@ class MeView(ContractResponseMixin, APIView):
         return response
 
     def get(self, request):
-        return Response({"data": {**me_data(request.user), "demographic": demographic_data(request.user)}})
+        return Response({"data": me_data(request.user)})
 
     def delete(self, request):
         withdraw_account(request.user.pk)

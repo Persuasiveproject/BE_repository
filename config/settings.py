@@ -226,12 +226,13 @@ from debates.schedules.results import BEAT_SCHEDULE as RESULT_BEAT_SCHEDULE
 from discussions.ai.schedules import BEAT_SCHEDULE as AI_SUMMARY_BEAT_SCHEDULE
 
 CELERY_BEAT_SCHEDULE = {**CLOSING_BEAT_SCHEDULE, **RESULT_BEAT_SCHEDULE, **AI_SUMMARY_BEAT_SCHEDULE}
-CELERY_BEAT_SCHEDULE['purge-expired-withdrawn-identities'] = {
-    'task': 'accounts.tasks.purge_expired_withdrawn_identities', 'schedule': 86400.0,
-}
 if os.environ.get('CELERY_HEARTBEAT_ENABLED', 'false').lower() == 'true':
     CELERY_BEAT_SCHEDULE['local-heartbeat'] = {
         'task': 'config.tasks.ping',
         'schedule': 30.0,
         'options': {'expires': 30},
     }
+
+CELERY_BEAT_SCHEDULE['purge-expired-withdrawn-identities'] = {
+    'task': 'accounts.tasks.purge_expired_withdrawn_identities', 'schedule': 86400.0,
+}
