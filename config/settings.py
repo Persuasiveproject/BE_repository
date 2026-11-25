@@ -162,6 +162,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# P3 authentication core. No public login/refresh/logout route is enabled yet.
+KAKAO_APP_ID = int(os.environ.get('KAKAO_APP_ID') or '0')
+KAKAO_REST_API_KEY = os.environ.get('KAKAO_REST_API_KEY', '')
+KAKAO_CLIENT_SECRET = os.environ.get('KAKAO_CLIENT_SECRET', '')
+KAKAO_REDIRECT_URIS = tuple(
+    uri.strip() for uri in os.environ.get('KAKAO_REDIRECT_URIS', '').split(',') if uri.strip()
+)
+MOCK_IDENTITY_ENABLED = os.environ.get('MOCK_IDENTITY_ENABLED', 'false').lower() == 'true'
+MOCK_IDENTITY_SIGNING_KEY = os.environ.get('MOCK_IDENTITY_SIGNING_KEY', '')
+IDENTITY_HASH_KEY = os.environ.get('IDENTITY_HASH_KEY', '')
+
 # Redis DB 0: 작업 큐, DB 1: 임시 작업 결과. 서비스 데이터는 PostgreSQL에 저장한다.
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/1')
