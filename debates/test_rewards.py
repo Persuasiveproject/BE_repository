@@ -4,7 +4,9 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from discussions.models import Opinion, Persuasion
@@ -127,3 +129,26 @@ class DebateRewardTests(TestCase):
         clear_result_state(debate.pk)
         self.assertTrue(compute_debate_result(debate.pk))
         self.assertEqual(CreditHistory.objects.count(), 1)
+
+    def test_history_exposes_each_settlements_exact_credit_after(self):
+        first, first_opinion = self.debate_with_opinion()
+        self.change(self.participant(first), Stance.CON, Stance.PRO, first_opinion)
+        self.change(
+            self.participant(first, current=Stance.NEUTRAL), Stance.CON, Stance.NEUTRAL, first_opinion,
+        )
+        self.assertTrue(compute_debate_result(first.pk))
+        self.assertFalse(compute_debate_result(first.pk))
+
+        second, second_opinion = self.debate_with_opinion()
+        self.change(self.participant(second), Stance.CON, Stance.PRO, second_opinion)
+        self.assertTrue(compute_debate_result(second.pk))
+
+        client = APIClient()
+        client.force_authenticate(self.author)
+        response = client.get(reverse("me-credit-history"))
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()["data"]["histories"]
+        self.assertEqual([row["reason"] for row in rows], [PERSUASION_REWARD, PERSUASION_REWARD])
+        self.assertEqual([row["refId"] for row in rows], [str(second.pk), str(first.pk)])
+        self.assertEqual([row["amount"] for row in rows], ["0.248661", "0.375000"])
+        self.assertEqual([row["creditAfter"] for row in rows], ["30.623661", "30.375000"])
