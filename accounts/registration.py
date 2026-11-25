@@ -51,12 +51,17 @@ def register_kakao_user(*, provider_id, email, nickname):
         },
     )
     if created:
-        CoinTransaction.objects.create(
-            user=user, amount=SIGNUP_COINS, type=CoinTransaction.Type.SIGNUP_BONUS,
-            balance_after=SIGNUP_COINS, ref_type=CoinTransaction.RefType.USER,
-            ref_id=user.pk,
-        )
-        CreditHistory.objects.create(
-            user=user, amount=SIGNUP_CREDIT, reason="SIGNUP_BONUS", ref_id=user.pk,
-        )
+        record_signup_bonus(user)
     return user, created
+
+
+def record_signup_bonus(user):
+    """Ledger rows for a user just created with SIGNUP_COINS and SIGNUP_CREDIT balances."""
+    CoinTransaction.objects.create(
+        user=user, amount=SIGNUP_COINS, type=CoinTransaction.Type.SIGNUP_BONUS,
+        balance_after=SIGNUP_COINS, ref_type=CoinTransaction.RefType.USER,
+        ref_id=user.pk,
+    )
+    CreditHistory.objects.create(
+        user=user, amount=SIGNUP_CREDIT, reason="SIGNUP_BONUS", ref_id=user.pk,
+    )

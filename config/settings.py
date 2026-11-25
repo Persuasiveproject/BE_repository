@@ -173,10 +173,29 @@ MOCK_IDENTITY_ENABLED = os.environ.get('MOCK_IDENTITY_ENABLED', 'false').lower()
 MOCK_IDENTITY_SIGNING_KEY = os.environ.get('MOCK_IDENTITY_SIGNING_KEY', '')
 IDENTITY_HASH_KEY = os.environ.get('IDENTITY_HASH_KEY', '')
 
+# 공개 가입·로그인 API(accounts/api). 세션은 위 SessionStore(Redis)를 Bearer 헤더로 쓴다.
+# 순서를 지킨다: 401 응답의 WWW-Authenticate는 첫 인증 방식(Basic)을 따르는 기존 계약이 있다(economy.test_wallet).
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+        'accounts.api.tokens.BearerSessionAuthentication',
+    ],
+}
+AUTH_ACCESS_SECONDS = int(os.environ.get('AUTH_ACCESS_SECONDS', str(14 * 24 * 3600)))
+# 휴대폰 인증번호 발송 업체. mock은 문자를 보내지 않고 서버 로그에 남긴다.
+AUTH_SMS_PROVIDER = os.environ.get('AUTH_SMS_PROVIDER', 'mock')
+# mock일 때 응답에 인증번호를 넣을지(시연 서버 전용). 운영에서는 false.
+AUTH_SMS_DEV_CODE_VISIBLE = os.environ.get('AUTH_SMS_DEV_CODE_VISIBLE', 'false').lower() == 'true'
+# 휴대폰 번호 해시 키. 비우면 SECRET_KEY를 쓴다. 운영 중 바꾸면 기존 휴대폰 회원을 찾지 못한다.
+AUTH_PHONE_HASH_KEY = os.environ.get('AUTH_PHONE_HASH_KEY', '')
+
 # Redis DB 0: 작업 큐, DB 1: 임시 작업 결과. 서비스 데이터는 PostgreSQL에 저장한다.
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/1')
 RESULT_STATE_REDIS_URL = os.environ.get('RESULT_STATE_REDIS_URL', CELERY_RESULT_BACKEND)
+# 로그인 세션·휴대폰 인증번호를 둘 Redis. 기본은 결과 상태와 같은 Redis(키 접두사 ye:auth:v1:로 구분).
+AUTH_SESSION_REDIS_URL = os.environ.get('AUTH_SESSION_REDIS_URL', RESULT_STATE_REDIS_URL)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
