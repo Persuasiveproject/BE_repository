@@ -41,6 +41,7 @@ class CoinTransaction(models.Model):
 class CreditHistory(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     amount = models.DecimalField(max_digits=18, decimal_places=6)
+    credit_after = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     reason = models.CharField(max_length=30)
     ref_id = models.PositiveBigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

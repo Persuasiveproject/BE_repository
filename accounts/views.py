@@ -107,6 +107,7 @@ class CreditHistorySerializer(serializers.BaseSerializer):
         return {
             "id": str(history.pk),
             "amount": format(history.amount, ".6f"),
+            "creditAfter": format(history.credit_after, ".6f") if history.credit_after is not None else None,
             "reason": history.reason,
             "refId": str(history.ref_id) if history.ref_id is not None else None,
             "createdAt": utc(history.created_at),

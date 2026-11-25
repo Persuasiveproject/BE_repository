@@ -79,7 +79,8 @@ class CreditAndBadgeTests(TestCase):
             user=self.user, amount=Decimal("-1.000000"), reason="REPORT_PENALTY", ref_id=None,
         )
         second = CreditHistory.objects.create(
-            user=self.user, amount=Decimal("0.125000"), reason="PERSUASION_REWARD", ref_id=77,
+            user=self.user, amount=Decimal("0.125000"), credit_after=Decimal("10.125000"),
+            reason="PERSUASION_REWARD", ref_id=77,
         )
 
         response = self.client.get(self.history_url)
@@ -92,16 +93,18 @@ class CreditAndBadgeTests(TestCase):
         histories = body["data"]["histories"]
         self.assertEqual([h["id"] for h in histories], [str(second.pk), str(first.pk)])
         for item in histories:
-            self.assertEqual(set(item), {"id", "amount", "reason", "refId", "createdAt"})
+            self.assertEqual(set(item), {"id", "amount", "creditAfter", "reason", "refId", "createdAt"})
             self.assertTrue(item["createdAt"].endswith("Z"))
 
         self.assertEqual(histories[0]["amount"], "0.125000")
         self.assertEqual(histories[0]["reason"], "PERSUASION_REWARD")
         self.assertEqual(histories[0]["refId"], "77")
+        self.assertEqual(histories[0]["creditAfter"], "10.125000")
 
         self.assertEqual(histories[1]["amount"], "-1.000000")
         self.assertEqual(histories[1]["reason"], "REPORT_PENALTY")
         self.assertIsNone(histories[1]["refId"])
+        self.assertIsNone(histories[1]["creditAfter"])
 
     def test_credit_history_cursor_pagination_of_20(self):
         records = [

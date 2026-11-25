@@ -86,7 +86,8 @@ def award_debate_rewards(debate, total_participants):
                 account.credit += amount
                 account.save(update_fields=["credit"])
                 CreditHistory.objects.create(
-                    user=account, amount=amount, reason=PERSUASION_REWARD, ref_id=debate.pk,
+                    user=account, amount=amount, credit_after=account.credit,
+                    reason=PERSUASION_REWARD, ref_id=debate.pk,
                 )
                 Persuasion.objects.filter(pk__in=[row.persuasion_id for row in wins]).update(reward_given=True)
                 Notification.objects.create(
