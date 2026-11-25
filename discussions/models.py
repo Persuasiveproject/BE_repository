@@ -113,3 +113,19 @@ class AISummary(models.Model):
 
     class Meta:
         db_table = "ai_summaries"
+
+
+class AIIssueMap(models.Model):
+    """토론 중간 쟁점 정리. issues는 [{title, pro: {text, sourceIds}|null, con: {...}|null}].
+
+    한쪽만 있는 쟁점은 '다른 쪽이 아직 답하지 않은 쟁점'으로 화면에 보인다. 승패·우열은 담지 않는다.
+    """
+
+    debate = models.ForeignKey("debates.Debate", on_delete=models.CASCADE)
+    issues = models.JSONField()
+    model = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ai_issue_maps"
+        indexes = [models.Index(fields=["debate", "-created_at"], name="ai_issue_maps_debate_idx")]

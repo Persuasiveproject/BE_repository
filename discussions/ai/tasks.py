@@ -5,6 +5,8 @@
 - 종료된 토론: 종료 직후 최종 요약을 한 번 만든다.
 - 근거 글 삭제·숨김: 매 주기 확인해 요약을 내리고 다시 만든다. 삭제 API에서 즉시 반영하려면
   refresh_debate_summary.delay(debate_id)를 호출한다.
+- 쟁점 정리(끝장토론만): 30분마다 확인하고, 입력 글 구성이 바뀌었을 때만 다시 만든다.
+  종료된 끝장토론은 종료 직후 한 번 더 확인한다. 화면은 읽을 때 숨김·삭제된 근거를 뺀다.
 """
 import logging
 from datetime import timedelta
@@ -15,14 +17,16 @@ from django.db.models import Max
 from django.utils import timezone
 
 from debates.models import Debate
-from discussions.models import AISummary
+from discussions.models import AIIssueMap, AISummary
 
 from . import state
+from .issues import generate_issue_map
 from .service import generate_summary
 
 logger = logging.getLogger(__name__)
 INTERVAL = {Debate.Type.QUICK: timedelta(minutes=2), Debate.Type.ENDLESS: timedelta(minutes=5)}
 FINAL_WINDOW = timedelta(hours=1)
+ISSUE_INTERVAL = timedelta(minutes=30)
 BATCH = 20
 
 
@@ -64,6 +68,21 @@ def refresh_ai_summaries():
     ]
     for _, debate_id in sorted(due)[:BATCH]:
         done += generate_summary(debate_id) == "created"
+
+    # 3) 끝장토론 쟁점 정리: 진행 중은 30분마다, 종료된 것은 종료 직후 한 번
+    endless_open = [i for i, t in open_debates if t == Debate.Type.ENDLESS]
+    endless_closed = list(
+        Debate.objects.filter(pk__in=[i for i, _ in closed], type=Debate.Type.ENDLESS).values_list("id", flat=True)
+    )
+    last_issue = dict(
+        AIIssueMap.objects.filter(debate_id__in=endless_open + endless_closed)
+        .values("debate_id").annotate(last=Max("created_at")).values_list("debate_id", "last")
+    )
+    issue_due = [(last_issue.get(i) or epoch, i) for i in endless_open
+                 if last_issue.get(i) is None or now - last_issue[i] >= ISSUE_INTERVAL]
+    issue_due += [(epoch, i) for i in endless_closed]
+    for _, debate_id in sorted(issue_due)[:BATCH]:
+        generate_issue_map(debate_id)
     return done
 
 

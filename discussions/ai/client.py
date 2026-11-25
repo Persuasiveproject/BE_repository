@@ -20,35 +20,38 @@ class SummaryLLMError(Exception):
     pass
 
 
-def _body(user_text):
-    gen = {"responseMimeType": "application/json", _schema_field[0]: SCHEMA}
+def _body(user_text, system=SYSTEM_PROMPT, schema=SCHEMA):
+    gen = {"responseMimeType": "application/json", _schema_field[0]: schema}
     if settings.AI_SUMMARY_THINKING:
         gen["thinkingConfig"] = {"thinkingLevel": settings.AI_SUMMARY_THINKING}
     return {
-        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": gen,
     }
 
 
-def _post(url, payload):
+def _post(url, payload, timeout=TIMEOUT_SECONDS):
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), method="POST",
         headers={"Content-Type": "application/json", "x-goog-api-key": settings.GEMINI_API_KEY},
     )
-    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
-def generate(user_text):
-    """반환: (모델이 낸 JSON 문자열, usageMetadata dict)"""
+def generate(user_text, *, system=SYSTEM_PROMPT, schema=SCHEMA, timeout=TIMEOUT_SECONDS, attempts=3):
+    """반환: (모델이 낸 JSON 문자열, usageMetadata dict).
+
+    쟁점 정리·작성 코치도 같은 호출을 쓴다. 작성 코치는 사용자가 기다리므로 timeout을 짧게, attempts=1로 부른다.
+    """
     if not settings.GEMINI_API_KEY:
         raise SummaryLLMError("GEMINI_API_KEY is not set")
     url = URL.format(model=settings.AI_SUMMARY_MODEL)
     last_error = None
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
-            data = _post(url, _body(user_text))
+            data = _post(url, _body(user_text, system, schema), timeout)
             cand = (data.get("candidates") or [{}])[0]
             text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
             if cand.get("finishReason") not in (None, "STOP") or not text:
@@ -61,10 +64,12 @@ def generate(user_text):
                 continue
             if e.code in (429, 500, 503):
                 last_error = SummaryLLMError(f"HTTP {e.code}")
-                time.sleep(2 * (attempt + 1))
+                if attempt + 1 < attempts:
+                    time.sleep(2 * (attempt + 1))
                 continue
             raise SummaryLLMError(f"HTTP {e.code}: {detail}") from e
         except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
             last_error = SummaryLLMError(f"network: {e}")
-            time.sleep(2 * (attempt + 1))
+            if attempt + 1 < attempts:
+                time.sleep(2 * (attempt + 1))
     raise last_error or SummaryLLMError("unknown")
