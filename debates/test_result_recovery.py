@@ -55,7 +55,7 @@ class ResultRecoveryTests(ResultFixture, TransactionTestCase):
 
         def assert_processing(debate):
             self.assertEqual(self.status(), "PENDING")
-            save_debate_statistics(debate)
+            return save_debate_statistics(debate)
         with patch("debates.results.save_debate_statistics", side_effect=assert_processing):
             self.assertTrue(compute_debate_result(self.debate.pk))
         self.assertIsNone(get_result_state(self.debate.pk))
@@ -150,7 +150,7 @@ class ResultRecoveryTests(ResultFixture, TransactionTestCase):
             entered.set()
             if not release.wait(10):
                 raise RuntimeError("Timed out waiting for competing attempt")
-            save_debate_statistics(debate)
+            return save_debate_statistics(debate)
         def worker():
             close_old_connections()
             try:

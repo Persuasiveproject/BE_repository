@@ -5,15 +5,25 @@ from rest_framework.views import APIView
 from debates.api_contract import ContractError, ContractResponseMixin
 from debates.models import Debate, Stance
 from debates.serializers import utc
-from discussions.ai.service import flat_source_ids
+from discussions.ai.service import flat_source_ids, summary_status
 from discussions.models import AIIssueMap, AISummary, Opinion
+
+
+STATUS_MESSAGES = {
+    "INSUFFICIENT": "AI 요약을 만들려면 공개 글이 5개 이상 필요해요.",
+    "PENDING": "AI 요약을 준비하고 있어요.",
+    "GENERATING": "AI가 토론 내용을 요약하고 있어요.",
+    "UPDATING": "최신 토론 내용을 반영해 AI 요약을 갱신하고 있어요.",
+    "READY": "AI 요약이 준비됐어요.",
+    "FAILED": "AI 요약을 만들지 못했어요. 잠시 후 다시 확인해 주세요.",
+}
 
 
 class DebateSummaryView(ContractResponseMixin, APIView):
     """API 43: GET /v1/debates/:debateId/summary (비회원).
 
-    PRO/CON별 최신 요약을 반환한다. 근거 ID는 같은 토론의 공개 의견만 남긴다.
-    요약이 없으면 summaries를 빈 배열로 반환한다. NEUTRAL 요약은 추가하지 않는다.
+    PRO/CON summaries remain separate from neutralSummary. A summary with
+    missing, hidden, or unrelated sources is withheld until it is refreshed.
     """
 
     permission_classes = [AllowAny]
@@ -24,7 +34,7 @@ class DebateSummaryView(ContractResponseMixin, APIView):
             raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
 
         latest = []
-        for stance in (Stance.PRO, Stance.CON):
+        for stance in Stance.values:
             row = AISummary.objects.filter(debate=debate, stance=stance).order_by("-created_at", "-id").first()
             if row is not None:
                 latest.append(row)
@@ -50,13 +60,30 @@ class DebateSummaryView(ContractResponseMixin, APIView):
                 ],
             } for line, ids in zip(lines, groups)]
 
-        return Response({"data": {"summaries": [{
-            "stance": row.stance,
-            "summaryText": row.summary_text,
-            "sourcePostIds": [str(i) for i in public(flat_source_ids(row.source_opinion_ids))],
-            "items": items(row),
-            "createdAt": utc(row.created_at),
-        } for row in latest]}})
+        summaries = []
+        neutral = None
+        for row in latest:
+            ids = flat_source_ids(row.source_opinion_ids)
+            if not ids or any(not str(i).isdigit() or int(i) not in roots for i in ids):
+                continue
+            item = {
+                "stance": row.stance,
+                "summaryText": row.summary_text,
+                "sourcePostIds": [str(i) for i in public(ids)],
+                "items": items(row),
+                "createdAt": utc(row.created_at),
+            }
+            if row.stance == Stance.NEUTRAL:
+                neutral = item
+            else:
+                summaries.append(item)
+        status = summary_status(debate.pk, bool(summaries or neutral))
+        return Response({"data": {
+            "summaries": summaries,
+            "neutralSummary": neutral,
+            "status": status,
+            "statusMessage": STATUS_MESSAGES[status],
+        }})
 
 
 class DebateIssuesView(ContractResponseMixin, APIView):
