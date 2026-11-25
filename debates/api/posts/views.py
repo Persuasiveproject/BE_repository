@@ -9,13 +9,14 @@ from debates.api.writes import IdempotentWrite, lock_debate_for_write
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
 from debates.models import Debate, DebateParticipant, Stance
 from debates.stance_checks import require_before_deadline, require_open_debate
+from discussions.ai.coach import coach
 from discussions.models import Opinion, OpinionReference, OpinionVote
 from economy.models import UserBadge
 from engagement.notifications import notify_reply
 from moderation.checks import require_no_banned_words
 
 from .pagination import post_page
-from .serializers import PostInput, post_created_data
+from .serializers import CoachInput, PostInput, post_created_data
 from .spam import require_not_spamming
 
 
@@ -214,3 +215,31 @@ class PostReactionView(ContractResponseMixin, APIView):
     def delete(self, request, post_id):
         set_reaction(request.user, post_id, None)
         return Response(status=204)
+
+
+class PostCoachView(ContractResponseMixin, APIView):
+    """POST /v1/debates/:debateId/posts/coach — 올리기 전 작성 코치.
+
+    본문: {content, parentId?}. 응답: {verdict: OK|SUGGEST|UNAVAILABLE, reasons: [...], suggestion}.
+    글을 저장하지 않는다. 코치가 쓸 수 없으면 UNAVAILABLE(200)을 돌려주고 화면은 그대로 올린다.
+    """
+
+    permission_classes = [IsActiveMember]
+
+    def post(self, request, debate_id):
+        payload = CoachInput(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        debate = Debate.objects.with_deadline().filter(pk=debate_id, status__in=PUBLIC_DEBATE_STATES).first()
+        if debate is None:
+            raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
+        if not DebateParticipant.objects.filter(debate=debate, user=request.user).exists():
+            raise ContractError(403, "NOT_PARTICIPANT", "Join this debate before posting.")
+        require_open_debate(debate)
+        parent_text = None
+        if "parentId" in data:
+            parent = visible_opinions().filter(debate=debate, pk=data["parentId"]).only("content_plain", "content").first()
+            if parent is None:
+                raise ContractError(400, "PARENT_DEBATE_MISMATCH", "Choose a visible parent opinion in this debate.")
+            parent_text = (parent.content_plain or parent.content or "").strip()[:1000]
+        return Response({"data": coach(request.user.pk, debate.title, data["content"], parent_text)})

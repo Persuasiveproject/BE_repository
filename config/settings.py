@@ -186,6 +186,9 @@ AI_SUMMARY_THINKING = os.environ.get('AI_SUMMARY_THINKING', 'minimal')
 AI_SUMMARY_MONTHLY_BUDGET_USD = float(os.environ.get('AI_SUMMARY_MONTHLY_BUDGET_USD', '300'))
 AI_SUMMARY_PRICE_IN = float(os.environ.get('AI_SUMMARY_PRICE_IN', '0.25'))  # 달러/100만 토큰
 AI_SUMMARY_PRICE_OUT = float(os.environ.get('AI_SUMMARY_PRICE_OUT', '1.50'))
+# 올리기 전 작성 코치. 사용자가 기다리므로 짧게 한 번만 부르고, 실패하면 그대로 올린다.
+AI_COACH_ENABLED = os.environ.get('AI_COACH_ENABLED', 'false').lower() == 'true'
+AI_COACH_TIMEOUT_SECONDS = float(os.environ.get('AI_COACH_TIMEOUT_SECONDS', '6'))
 
 # 개발환경 확인용이다. 실제 마감·보상·AI 작업은 각 도메인에서 구현한다.
 from debates.schedules.closing import BEAT_SCHEDULE as CLOSING_BEAT_SCHEDULE
