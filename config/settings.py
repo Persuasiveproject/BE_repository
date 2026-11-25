@@ -154,6 +154,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+MEDIA_ROOT = BASE_DIR / 'media'
+# Absolute so stored image URLs work outside a request (the image check task has none).
+MEDIA_URL = os.environ.get('MEDIA_URL', 'http://localhost:8000/media/')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -175,7 +178,7 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_RESULT_EXPIRES = 3600
 CELERY_IMPORTS = (
-    'config.tasks', 'debates.tasks.closing', 'debates.tasks.results', 'discussions.ai.tasks',
+    'config.tasks', 'debates.tasks.closing', 'debates.tasks.images', 'debates.tasks.results', 'discussions.ai.tasks',
 )
 
 # AI 요약 (FC-DB-220-002·003·006). 기본은 꺼짐: 키가 없는 환경에서 외부 호출을 하지 않는다.
