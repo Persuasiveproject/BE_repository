@@ -78,6 +78,11 @@ class User(AbstractBaseUser):
 
     class Meta:
         db_table = "users"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_id"], name="user_provider_identity_uniq",
+            ),
+        ]
 
     @property
     def is_active(self):
@@ -162,6 +167,13 @@ class UserIdentityVerification(models.Model):
 
     class Meta:
         db_table = "user_identity_verifications"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["identity_key_hash"],
+                condition=models.Q(status="VERIFIED", identity_key_hash__isnull=False),
+                name="verified_identity_hash_uniq",
+            ),
+        ]
 
 
 class APIIdempotencyRecord(models.Model):
