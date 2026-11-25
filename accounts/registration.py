@@ -34,8 +34,9 @@ def register_kakao_user(*, provider_id, email, nickname):
     if existing is not None:
         return existing, False
 
-    # Email-less signup policy is unresolved. Do not invent an email address.
-    email = User._meta.get_field("email").clean(email, None)
+    # 이메일은 카카오가 검증된 값을 줄 때만 저장하고, 없으면 빈 값으로 가입한다(가짜 이메일을 만들지 않는다).
+    # 카카오는 이메일 동의항목에 사용자가 동의해야만 이메일을 주므로, 없다고 가입을 막지 않는다(2026-11-25 결정).
+    email = "" if email is None else User._meta.get_field("email").clean(email, None)
     nickname = User._meta.get_field("nickname").clean(nickname, None)
     if not nickname.strip():
         raise ValidationError({"nickname": "A nonblank nickname is required."})

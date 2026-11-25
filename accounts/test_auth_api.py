@@ -149,11 +149,11 @@ class KakaoFlowTests(AuthFixture, TestCase):
         self.assertEqual((user.nickname, user.email), ("펭귄", "m@example.com"))  # 앱에서 고른 닉네임
         self.assertEqual(self.kakao(kakao.KakaoIdentity("777", None, None)).json()["data"]["status"], "LOGGED_IN")
 
-    def test_email_less_kakao_signup_follows_73_policy(self):
+    def test_email_less_kakao_signup_is_allowed(self):
         ticket = self.kakao(kakao.KakaoIdentity("888", None, None)).json()["data"]["signupToken"]
         res = self.signup(ticket)
-        self.assertEqual(res.json()["error"]["code"], "KAKAO_EMAIL_REQUIRED")
-        self.assertFalse(User.objects.filter(provider_id="888").exists())
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(User.objects.get(provider="KAKAO", provider_id="888").email, "")
 
     def test_not_configured_and_failed_exchange(self):
         res = self.client.post(reverse("auth-kakao"), self.body, format="json")

@@ -175,10 +175,10 @@ class KakaoTests(TestCase):
         self.assertEqual(CoinTransaction.objects.count(), 1)
         self.assertEqual(UserTermAgreement.objects.count(), 2)
 
-    def test_missing_email_never_fabricates_account_and_deleted_account_not_reopened(self):
-        with self.assertRaises(ValidationError):
-            register_verified_identity(KakaoIdentity("456", None, "회원"), agreements={})
-        self.assertFalse(User.objects.exists())
+    def test_missing_email_signs_up_without_fabricating_and_deleted_account_not_reopened(self):
+        created_user, created = register_verified_identity(KakaoIdentity("789", None, "회원"), agreements={term.pk: True for term in terms()})
+        self.assertTrue(created)
+        self.assertEqual(created_user.email, "")  # 가짜 이메일을 만들지 않는다
         user = member()
         user.provider, user.provider_id, user.status = "KAKAO", "456", "DELETED"
         user.save()
