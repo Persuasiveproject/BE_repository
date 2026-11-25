@@ -8,3 +8,4 @@ db.sqlite3
 celerybeat-schedule*
 celerybeat.pid
 AGENTS.md
+media/
