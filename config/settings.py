@@ -175,7 +175,8 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_RESULT_EXPIRES = 3600
 CELERY_IMPORTS = (
-    'config.tasks', 'debates.tasks.closing', 'debates.tasks.results', 'discussions.ai.tasks',
+    'config.tasks', 'debates.tasks.closing', 'debates.tasks.results', 'debates.tasks.references',
+    'discussions.ai.tasks',
 )
 
 # AI 요약 (FC-DB-220-002·003·006). 기본은 꺼짐: 키가 없는 환경에서 외부 호출을 하지 않는다.
@@ -190,12 +191,19 @@ AI_SUMMARY_PRICE_OUT = float(os.environ.get('AI_SUMMARY_PRICE_OUT', '1.50'))
 AI_COACH_ENABLED = os.environ.get('AI_COACH_ENABLED', 'false').lower() == 'true'
 AI_COACH_TIMEOUT_SECONDS = float(os.environ.get('AI_COACH_TIMEOUT_SECONDS', '6'))
 
+# Reference link safety checks (FC-DB-200-P03-001). Off by default so keyless environments make no calls.
+SAFE_BROWSING_API_KEY = os.environ.get('SAFE_BROWSING_API_KEY', '')
+SAFE_BROWSING_ENABLED = os.environ.get('SAFE_BROWSING_ENABLED', 'false').lower() == 'true'
+
 # 개발환경 확인용이다. 실제 마감·보상·AI 작업은 각 도메인에서 구현한다.
 from debates.schedules.closing import BEAT_SCHEDULE as CLOSING_BEAT_SCHEDULE
+from debates.schedules.references import BEAT_SCHEDULE as REFERENCE_BEAT_SCHEDULE
 from debates.schedules.results import BEAT_SCHEDULE as RESULT_BEAT_SCHEDULE
 from discussions.ai.schedules import BEAT_SCHEDULE as AI_SUMMARY_BEAT_SCHEDULE
 
-CELERY_BEAT_SCHEDULE = {**CLOSING_BEAT_SCHEDULE, **RESULT_BEAT_SCHEDULE, **AI_SUMMARY_BEAT_SCHEDULE}
+CELERY_BEAT_SCHEDULE = {
+    **CLOSING_BEAT_SCHEDULE, **RESULT_BEAT_SCHEDULE, **AI_SUMMARY_BEAT_SCHEDULE, **REFERENCE_BEAT_SCHEDULE,
+}
 if os.environ.get('CELERY_HEARTBEAT_ENABLED', 'false').lower() == 'true':
     CELERY_BEAT_SCHEDULE['local-heartbeat'] = {
         'task': 'config.tasks.ping',
