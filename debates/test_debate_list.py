@@ -120,7 +120,7 @@ class DebateListTests(TestCase):
 
     def test_invalid_filters(self):
         for params in (
-            {"status": "DRAFT"}, {"kind": "LONG"}, {"sort": "popular"},
+            {"status": "DRAFT"}, {"kind": "LONG"}, {"sort": "unknown"},
             {"categoryId": "abc"}, {"categoryId": "0"}, {"categoryId": "999999"},
             {"query": "a" * 101},
         ):
@@ -132,6 +132,37 @@ class DebateListTests(TestCase):
     def test_sort_latest_allowed(self):
         self.debate()
         self.assertEqual(len(self.ids(sort="latest")), 1)
+
+    def test_popular_search_paginates_across_ties_and_lower_counts(self):
+        more_popular = self.debate(title="Income", participant_count=3)
+        ties = [self.debate(title="Income", participant_count=2) for _ in range(20)]
+        less_popular = self.debate(title="Income", participant_count=1)
+        self.debate(title="Income", participant_count=10, category=self.other_category)
+        self.debate(title="Other", participant_count=10)
+        self.debate(status="DRAFT", title="Income", participant_count=10)
+        params = {"query": "income", "categoryId": str(self.category.pk), "sort": "popular"}
+        expected = [more_popular, *reversed(ties), less_popular]
+
+        first = self.client.get(self.url, params)
+        self.assertEqual(first.status_code, 200, first.content)
+        first_body = first.json()
+        cursor = first_body["meta"]["nextCursor"]
+        self.assertTrue(cursor)
+        self.assertEqual(
+            [item["id"] for item in first_body["data"]["debates"]],
+            [str(debate.pk) for debate in expected[:20]],
+        )
+
+        second = self.client.get(self.url, {**params, "cursor": cursor})
+        self.assertEqual(second.status_code, 200, second.content)
+        second_body = second.json()
+        self.assertEqual(
+            [item["id"] for item in second_body["data"]["debates"]],
+            [str(debate.pk) for debate in expected[20:]],
+        )
+        self.assertIsNone(second_body["meta"]["nextCursor"])
+        self.assert_invalid("CURSOR_INVALID", cursor=cursor, sort="latest")
+        self.assert_invalid("CURSOR_INVALID", cursor=cursor + "x", sort="popular")
 
     def test_anonymous_and_member_allowed(self):
         self.debate()

@@ -28,6 +28,8 @@ UTC 시각 변환은 debates/serializers.py의 utc 함수를 사용한다.
 
 `/v1/debates`는 `debates/api/debates/views.py`의 `DebateListView` 한 곳에서 처리한다.
 GET은 공개 목록, POST는 ACTIVE 회원의 초안 생성이며 URL 이름은 `debate-list`다.
+- GET의 기본 정렬은 `sort=latest`다. `sort=popular`는 홈(#14)의 인기 토론과 같은 누적 참여자 수 내림차순을 사용하며, 동점이면 ID 내림차순을 적용한다.
+- 인기순은 검색·필터 적용 후 20개씩 반환한다. 다음 페이지에도 같은 정렬과 필터를 사용한다. 페이지 요청 사이에 참여자 수가 바뀌면 결과 순서도 달라질 수 있다.
 초안 생성의 입력 검증·오류·응답과 코인 미차감 동작은 유지한다.
 
 ### #44 최종 통계

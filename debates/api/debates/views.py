@@ -1,17 +1,19 @@
 import re
 
+from django.core import signing
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.functional import cached_property
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.utils.urls import replace_query_param
 
 from debates.api.draft.serializers import DraftInput
 from debates.api.draft.views import active_category, validated_draft
 from debates.api.joined.views import DebateCursorPagination
 from debates.api_contract import MAX_ID, ContractError, ContractResponseMixin, IsActiveMember
-from debates.listing import filter_visible
+from debates.listing import POPULAR_ORDERING, filter_visible
 from debates.models import Category, Debate
 from debates.serializers import utc
 from .serializers import DebateListSerializer
@@ -24,13 +26,46 @@ class PublicDebateCursorPagination(DebateCursorPagination):
     invalid_cursor_code = "CURSOR_INVALID"
 
 
+class PopularDebateCursorPagination(PublicDebateCursorPagination):
+    cursor_salt = "debates.public-list.popular"
+
+    def paginate_queryset(self, queryset, request, view=None):
+        self.base_url = request.build_absolute_uri()
+        cursor = request.query_params.get(self.cursor_query_param)
+        if cursor is not None:
+            try:
+                participant_count, debate_id = signing.loads(cursor, salt=self.cursor_salt)
+            except (signing.BadSignature, TypeError, ValueError) as exc:
+                raise ContractError(400, self.invalid_cursor_code, "Use a valid cursor.") from exc
+            queryset = queryset.filter(
+                Q(participant_count__lt=participant_count)
+                | Q(participant_count=participant_count, pk__lt=debate_id),
+            )
+        page = list(queryset.order_by(*POPULAR_ORDERING)[:self.page_size + 1])
+        self.has_next = len(page) > self.page_size
+        self.page = page[:self.page_size]
+        return self.page
+
+    def get_next_link(self):
+        if not self.has_next:
+            return None
+        last = self.page[-1]
+        cursor = signing.dumps((last.participant_count, last.pk), salt=self.cursor_salt)
+        return replace_query_param(self.base_url, self.cursor_query_param, cursor)
+
+
 def filter_invalid(message):
     return ContractError(400, "FILTER_INVALID", message)
 
 
 class DebateListView(ContractResponseMixin, ListAPIView):
     serializer_class = DebateListSerializer
-    pagination_class = PublicDebateCursorPagination
+
+    @property
+    def pagination_class(self):
+        if self.request.query_params.get("sort") == "popular":
+            return PopularDebateCursorPagination
+        return PublicDebateCursorPagination
 
     def get_permissions(self):
         if self.request.method == "POST":
@@ -57,9 +92,8 @@ class DebateListView(ContractResponseMixin, ListAPIView):
 
     def get_queryset(self):
         params = self.request.query_params
-        # Latest only until the popularity score is defined.
-        if params.get("sort", "latest") != "latest":
-            raise filter_invalid("Use latest.")
+        if params.get("sort", "latest") not in ("latest", "popular"):
+            raise filter_invalid("Use latest or popular.")
         debates = filter_visible(Debate.objects.with_deadline(), params.get("status"), self.as_of)
 
         kind = params.get("kind")

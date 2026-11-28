@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import User, UserInterestCategory
-from debates.models import Category, Debate, DebateParticipant, Stance
+from debates.models import Category, Debate
 
 
 ITEM_FIELDS = {
@@ -23,7 +23,6 @@ class HomeTests(TestCase):
         self.user = User.objects.create_user("member@example.com", "Member")
         self.category = Category.objects.create(name="Politics")
         self.interest = Category.objects.create(name="Economy")
-        self.joiners = 0
 
     def debate(self, status="OPEN", **fields):
         values = {
@@ -34,17 +33,6 @@ class HomeTests(TestCase):
             values["started_at"] = self.now
         values.update(fields)
         return Debate.objects.create(**values)
-
-    def join(self, debate, hours_ago):
-        self.joiners += 1
-        user = User.objects.create_user(f"joiner{self.joiners}@example.com", f"Joiner{self.joiners}")
-        participant = DebateParticipant.objects.create(
-            debate=debate, user=user, anonymous_no=self.joiners,
-            initial_stance=Stance.PRO, current_stance=Stance.PRO,
-        )
-        DebateParticipant.objects.filter(pk=participant.pk).update(
-            joined_at=self.now - timedelta(hours=hours_ago),
-        )
 
     def home(self):
         response = self.client.get(self.url)
@@ -74,21 +62,15 @@ class HomeTests(TestCase):
         self.assertEqual(self.ids("popularDebates"), [str(live.pk)])
         self.assertEqual(self.ids("recommendedDebates"), [str(live.pk)])
 
-    def test_popular_counts_recent_joins(self):
-        older_tie = self.debate()
-        busy = self.debate()
-        newer_tie = self.debate()
-        stale = self.debate()
-        for _ in range(2):
-            self.join(busy, hours_ago=1)
-        self.join(older_tie, hours_ago=23)
-        self.join(newer_tie, hours_ago=1)
-        for _ in range(3):
-            self.join(stale, hours_ago=25)
+    def test_popular_orders_by_total_participants_then_id(self):
+        older_tie = self.debate(participant_count=2)
+        busy = self.debate(participant_count=5)
+        newer_tie = self.debate(participant_count=2)
+        empty = self.debate(view_count=100)
 
         self.assertEqual(
             self.ids("popularDebates"),
-            [str(busy.pk), str(newer_tie.pk), str(older_tie.pk), str(stale.pk)],
+            [str(busy.pk), str(newer_tie.pk), str(older_tie.pk), str(empty.pk)],
         )
 
     def test_lists_are_limited_to_10(self):
