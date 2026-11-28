@@ -1,6 +1,3 @@
-from datetime import timedelta
-
-from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -8,7 +5,7 @@ from rest_framework.views import APIView
 
 from accounts.models import UserInterestCategory
 from debates.api_contract import ContractResponseMixin
-from debates.listing import debate_list_item, filter_visible
+from debates.listing import POPULAR_ORDERING, debate_list_item, filter_visible
 from debates.models import Debate
 
 
@@ -22,12 +19,7 @@ class HomeView(ContractResponseMixin, APIView):
         as_of = timezone.now()
         open_debates = filter_visible(Debate.objects.with_deadline(), Debate.Status.OPEN, as_of)
 
-        popular = open_debates.annotate(
-            recent_joins=Count(
-                "debateparticipant",
-                filter=Q(debateparticipant__joined_at__gt=as_of - timedelta(hours=24)),
-            ),
-        ).order_by("-recent_joins", "-id")[:HOME_SIZE]
+        popular = open_debates.order_by(*POPULAR_ORDERING)[:HOME_SIZE]
 
         recommended = []
         if request.user.is_authenticated:

@@ -6,6 +6,7 @@ from .serializers import utc
 
 
 VISIBLE_STATUSES = (Debate.Status.OPEN, Debate.Status.CLOSED)
+POPULAR_ORDERING = ("-participant_count", "-id")
 
 
 def filter_visible(debates, status, as_of):
