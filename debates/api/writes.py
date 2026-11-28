@@ -5,17 +5,20 @@ from datetime import timedelta
 from django.utils import timezone
 
 from accounts.models import APIIdempotencyRecord, User
+from accounts.identity import require_verified_identity
 from debates.api_contract import ContractError
 from debates.models import Debate
 
 
-def lock_debate_for_write(debate_id, user_id):
+def lock_debate_for_write(debate_id, user_id, *, require_identity=False):
     # Match the debate -> user lock order used by stance changes and closing.
     debate = Debate.objects.with_deadline().select_for_update().filter(pk=debate_id).first()
     if debate is None:
         raise ContractError(404, "DEBATE_NOT_FOUND", "Debate not found.")
     if not User.objects.select_for_update().filter(pk=user_id, status=User.Status.ACTIVE).exists():
         raise ContractError(403, "FORBIDDEN", "This account cannot modify the debate.")
+    if require_identity:
+        require_verified_identity(user_id)
     return debate
 
 

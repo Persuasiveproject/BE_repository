@@ -20,6 +20,11 @@ class DebateBFixture:
         self.member = User.objects.create_user("member@example.com", "Private nickname")
         self.creator = User.objects.create_user("creator@example.com", "Creator")
         self.now = timezone.now()
+        UserIdentityVerification.objects.create(
+            user=self.member, provider="test", request_id="fixture", status="VERIFIED",
+            identity_key_hash=f"{self.member.pk:064x}", verified_at=self.now,
+            expires_at=self.now + timedelta(minutes=5),
+        )
         self.debate = Debate.objects.create(
             creator=self.creator, category=Category.objects.create(name="Society"), type=Debate.Type.QUICK,
             title="Debate", content="Topic", duration_minutes=10, started_at=self.now,
@@ -95,16 +100,19 @@ class DebateBApiTests(DebateBFixture, TestCase):
         self.assertFalse(DebateParticipant.objects.exists())
         self.assertFalse(APIIdempotencyRecord.objects.exists())
 
-    def test_demo_join_without_identity_does_not_mark_account_verified(self):
+    def test_join_without_identity_is_blocked_without_marking_account_verified(self):
+        UserIdentityVerification.objects.filter(user=self.member).delete()
         self.assertFalse(UserIdentityVerification.objects.filter(user=self.member).exists())
-        self.assertEqual(self.join().status_code, 201)
+        response = self.join()
+        self.assertEqual((response.status_code, response.json()["error"]["code"]),
+                         (403, "IDENTITY_VERIFICATION_REQUIRED"))
         self.assertFalse(UserIdentityVerification.objects.filter(user=self.member).exists())
         profile = self.client.get("/v1/me").json()["data"]
         self.assertIs(profile["identityVerified"], False)
         self.member.refresh_from_db()
         self.assertEqual(self.member.status, User.Status.ACTIVE)
 
-    def test_identity_status_does_not_block_demo_participation_or_change_verification(self):
+    def test_only_verified_identity_can_join_without_changing_verification(self):
         for status in UserIdentityVerification.Status.values:
             with self.subTest(status=status):
                 user = User.objects.create_user(f"{status.lower()}@example.com", status)
@@ -112,15 +120,21 @@ class DebateBApiTests(DebateBFixture, TestCase):
                     user=user, provider="test", request_id=f"identity-{status}", status=status,
                     expires_at=self.now + timedelta(minutes=5),
                     verified_at=self.now if status == UserIdentityVerification.Status.VERIFIED else None,
+                    identity_key_hash=f"{user.pk:064x}" if status == "VERIFIED" else None,
                 )
                 before = UserIdentityVerification.objects.filter(pk=verification.pk).values().get()
                 self.client.force_authenticate(user)
-                self.assertEqual(self.join().status_code, 201)
+                response = self.join()
+                if status == "VERIFIED":
+                    self.assertEqual(response.status_code, 201)
+                else:
+                    self.assertEqual((response.status_code, response.json()["error"]["code"]),
+                                     (403, "IDENTITY_VERIFICATION_REQUIRED"))
                 self.assertEqual(UserIdentityVerification.objects.filter(pk=verification.pk).values().get(), before)
                 self.assertIs(self.client.get("/v1/me").json()["data"]["identityVerified"],
                               status == UserIdentityVerification.Status.VERIFIED)
 
-    def test_demo_join_still_requires_an_authenticated_active_member(self):
+    def test_join_requires_an_authenticated_active_member(self):
         guest = APIClient()
         response = guest.post(self.join_url, {"stance": Stance.PRO}, format="json", headers={"Idempotency-Key": "guest"})
         self.assertEqual((response.status_code, response.json()["error"]["code"]), (401, "AUTHENTICATION_REQUIRED"))

@@ -6,18 +6,29 @@ from unittest.mock import patch
 from django.db import connections
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
-from accounts.models import User
+from accounts.models import APIIdempotencyRecord, User, UserIdentityVerification
 from debates.models import Category, Debate, DebateImage
 from economy.models import CoinTransaction
+
+
+def verify_identity(user):
+    now = timezone.now()
+    return UserIdentityVerification.objects.create(
+        user=user, provider="test", request_id="publish-fixture", status="VERIFIED",
+        identity_key_hash=f"{user.pk:064x}", verified_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
 
 
 class DebatePublishTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user("writer@example.com", "Writer", coin_balance=3)
+        self.identity = verify_identity(self.user)
         self.category = Category.objects.create(name="Politics")
         self.debate = self.draft()
         self.client.force_authenticate(self.user)
@@ -87,6 +98,45 @@ class DebatePublishTests(TestCase):
         self.assertEqual(second.json(), first.json())
         self.assertEqual(self.balance(), 2)
         self.assertEqual(CoinTransaction.objects.count(), 1)
+
+    def test_unverified_creator_cannot_publish_or_spend_coins(self):
+        UserIdentityVerification.objects.filter(user=self.user).delete()
+        for status in (None, "PENDING", "FAILED"):
+            with self.subTest(status=status):
+                if status is not None:
+                    UserIdentityVerification.objects.update_or_create(
+                        user=self.user, defaults={
+                            "provider": "test", "request_id": "publish-fixture", "status": status,
+                            "expires_at": timezone.now() + timedelta(minutes=5),
+                        },
+                    )
+                response = self.publish()
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json(), {"error": {
+                    "code": "IDENTITY_VERIFICATION_REQUIRED", "message": "Verify identity to continue.",
+                }})
+                self.debate.refresh_from_db()
+                self.assertEqual(self.debate.status, Debate.Status.DRAFT)
+                self.assertEqual(self.debate.coin_cost, 0)
+                self.assertIsNone(self.debate.started_at)
+                self.assertIsNone(self.debate.ends_at)
+                self.assertEqual(self.balance(), 3)
+                self.assertFalse(CoinTransaction.objects.exists())
+                self.assertFalse(APIIdempotencyRecord.objects.exists())
+
+        UserIdentityVerification.objects.filter(user=self.user).delete()
+        verify_identity(self.user)
+        self.assertEqual(self.publish().status_code, 200)
+        self.assertEqual(self.balance(), 2)
+
+    def test_replay_requires_current_verified_identity(self):
+        self.assertEqual(self.publish().status_code, 200)
+        UserIdentityVerification.objects.filter(pk=self.identity.pk).update(status="FAILED")
+
+        self.assert_error(self.publish(), 403, "IDENTITY_VERIFICATION_REQUIRED")
+        self.assertEqual(self.balance(), 2)
+        self.assertEqual(CoinTransaction.objects.count(), 1)
+        self.assertEqual(APIIdempotencyRecord.objects.count(), 1)
 
     def test_other_key_after_publish_conflicts(self):
         self.publish()
@@ -207,6 +257,7 @@ class DebatePublishLimitConcurrencyTests(TransactionTestCase):
     def test_two_drafts_cannot_take_the_same_last_daily_slot(self):
         now = datetime(2026, 11, 18, 1, tzinfo=utc_timezone.utc)
         user = User.objects.create_user("writer@example.com", "Writer", coin_balance=5)
+        verify_identity(user)
         category = Category.objects.create(name="Politics")
         fields = dict(creator=user, category=category, type="QUICK", title="Title", content="Body", duration_minutes=10)
         for _ in range(2):

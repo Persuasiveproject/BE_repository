@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from django.test import TestCase
 
-from accounts.models import User
+from accounts.models import User, UserIdentityVerification
 from debates.test_b_api import DebateBFixture
 from engagement.models import Notification
 
@@ -16,6 +16,11 @@ class ReplyNotificationTests(DebateBFixture, TestCase):
 
     def member_named(self, email, nickname):
         user = User.objects.create_user(email, nickname)
+        UserIdentityVerification.objects.create(
+            user=user, provider="test", request_id=f"reply-fixture-{user.pk}", status="VERIFIED",
+            identity_key_hash=f"{user.pk:064x}", verified_at=self.now,
+            expires_at=self.now + timedelta(minutes=5),
+        )
         self.as_user(user)
         self.assertEqual(self.join(key=f"join-{email}").status_code, 201)
         self.as_user(self.member)
