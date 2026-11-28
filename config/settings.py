@@ -162,7 +162,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'accounts.User'
 
-# P3 authentication core. No public login/refresh/logout route is enabled yet.
+# P3 authentication services and explicitly enabled mock identity provider.
 KAKAO_APP_ID = int(os.environ.get('KAKAO_APP_ID') or '0')
 KAKAO_REST_API_KEY = os.environ.get('KAKAO_REST_API_KEY', '')
 KAKAO_CLIENT_SECRET = os.environ.get('KAKAO_CLIENT_SECRET', '')
@@ -170,6 +170,8 @@ KAKAO_REDIRECT_URIS = tuple(
     uri.strip() for uri in os.environ.get('KAKAO_REDIRECT_URIS', '').split(',') if uri.strip()
 )
 MOCK_IDENTITY_ENABLED = os.environ.get('MOCK_IDENTITY_ENABLED', 'false').lower() == 'true'
+# Mock provider request lifetime only; the real provider contract remains pending.
+MOCK_IDENTITY_REQUEST_SECONDS = int(os.environ.get('MOCK_IDENTITY_REQUEST_SECONDS', '300'))
 MOCK_IDENTITY_SIGNING_KEY = os.environ.get('MOCK_IDENTITY_SIGNING_KEY', '')
 IDENTITY_HASH_KEY = os.environ.get('IDENTITY_HASH_KEY', '')
 

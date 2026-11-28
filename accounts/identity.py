@@ -1,4 +1,4 @@
-"""Disabled-by-default mock identity provider; no public completion endpoint."""
+"""Disabled-by-default mock identity provider; proofs are issued by trusted tests only."""
 from datetime import timedelta
 import hashlib
 import hmac
@@ -87,7 +87,12 @@ def complete_mock_verification(*, user_id, request_id, proof):
             verification.verified_at = timezone.now()
             verification.save(update_fields=["status", "identity_key_hash", "verified_at", "updated_at"])
     except IntegrityError:
-        raise ContractError(409, "IDENTITY_ALREADY_REGISTERED", "This identity is already registered.") from None
+        # Only translate an actual duplicate identity; unrelated DB failures must surface.
+        if UserIdentityVerification.objects.filter(
+            status="VERIFIED", identity_key_hash=result["hash"],
+        ).exclude(user_id=user_id).exists():
+            raise ContractError(409, "IDENTITY_ALREADY_REGISTERED", "This identity is already registered.") from None
+        raise
     return verification
 
 

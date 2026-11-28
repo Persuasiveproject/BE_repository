@@ -1,10 +1,13 @@
 from django.urls import path
 
+from .api.identity import IdentityCompleteView, IdentityStartView
 from .api.views import KakaoLoginView, LogoutView, PhoneCodeView, PhoneVerifyView, RefreshView, SignupView, TermsView
 from .views import MeBadgesView, MeCreditHistoryView, MeCreditsView, MeInterestsView, MeView
 
 
 urlpatterns = [
+    path("auth/identity/start", IdentityStartView.as_view(), name="identity-start"),
+    path("auth/identity/complete", IdentityCompleteView.as_view(), name="identity-complete"),
     path("auth/phone/code", PhoneCodeView.as_view(), name="auth-phone-code"),
     path("auth/phone/verify", PhoneVerifyView.as_view(), name="auth-phone-verify"),
     path("auth/kakao", KakaoLoginView.as_view(), name="auth-kakao"),

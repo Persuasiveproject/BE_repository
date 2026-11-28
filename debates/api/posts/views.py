@@ -104,7 +104,7 @@ class DebatePostListView(ContractResponseMixin, APIView):
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
         write = IdempotentWrite(request, data)
-        debate = lock_debate_for_write(debate_id, request.user.pk)
+        debate = lock_debate_for_write(debate_id, request.user.pk, require_identity=True)
         if (saved := write.replay()) is not None:
             return Response(saved[0], status=saved[1])
           

@@ -19,12 +19,10 @@ class JoinDebateView(ContractResponseMixin, APIView):
         payload = JoinDebateInput(data=request.data)
         payload.is_valid(raise_exception=True)
         write = IdempotentWrite(request, payload.validated_data)
-        debate = lock_debate_for_write(debate_id, request.user.pk)
+        debate = lock_debate_for_write(debate_id, request.user.pk, require_identity=True)
         if (saved := write.replay()) is not None:
             return Response(saved[0], status=saved[1])
 
-        # Demo policy: ACTIVE members may join without identity verification.
-        # See docs/api25-demo-participation.md for scope and the spec override.
         require_open_debate(debate)
         participants = DebateParticipant.objects.filter(debate=debate)
         if participants.filter(user=request.user).exists():
