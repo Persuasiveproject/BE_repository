@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from django.db import transaction
 from django.utils import timezone
 
+from accounts.identity import require_verified_identity
 from accounts.models import User
 from economy.models import CoinTransaction
 
@@ -53,6 +54,7 @@ def publish_debate(*, debate_id, user, idempotency_key, request_path):
     account = User.objects.select_for_update().filter(pk=user.pk).first()
     if account is None or account.status != User.Status.ACTIVE:
         raise ContractError(403, "FORBIDDEN", "This account cannot publish debates.")
+    require_verified_identity(account.pk)
 
     scope = {
         "user": user,
